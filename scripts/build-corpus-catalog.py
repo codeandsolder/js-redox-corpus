@@ -163,11 +163,16 @@ CANDIDATE_QUERIES = {
         )
         ORDER BY c.cohort_count ASC, c.domain_count ASC, c.bytes DESC, c.sha256
     """,
+    "known-invalid": f"""
+        SELECT c.representative_path FROM current_body c JOIN body_analysis_best b USING (sha256)
+        WHERE b.analysis_contract = '{PROGRESS_CONTRACT}' AND b.fatal_error != 0
+        ORDER BY c.bytes DESC, c.sha256
+    """,
     "known-residual": f"""
         SELECT c.representative_path FROM current_body c JOIN body_analysis_best b USING (sha256)
-        WHERE b.analysis_contract = '{PROGRESS_CONTRACT}'
-          AND (b.fatal_error != 0 OR b.actionable_top_score > 0 OR b.actionable_signal_count > 0)
-        ORDER BY b.fatal_error DESC, b.actionable_top_score DESC, b.actionable_signal_count DESC,
+        WHERE b.analysis_contract = '{PROGRESS_CONTRACT}' AND b.fatal_error = 0
+          AND (b.actionable_top_score > 0 OR b.actionable_signal_count > 0)
+        ORDER BY b.actionable_top_score DESC, b.actionable_signal_count DESC,
                  c.cohort_count ASC, c.domain_count ASC, c.bytes DESC, c.sha256
     """,
     "known-zero": f"""
@@ -189,9 +194,9 @@ CANDIDATE_QUERIES = {
         LEFT JOIN body_analysis_best b ON b.sha256=c.sha256 AND b.analysis_contract='{PROGRESS_CONTRACT}'
         LEFT JOIN body_analysis_latest l ON l.sha256=c.sha256 AND l.analysis_contract='{PROGRESS_CONTRACT}'
         WHERE s.nuisance IS NULL AND s.content_kind LIKE 'javascript%' AND (
-          (l.sha256 IS NOT NULL AND (l.fatal_error!=0 OR l.actionable_top_score>0 OR l.actionable_signal_count>0))
+          (l.sha256 IS NOT NULL AND l.fatal_error=0 AND (l.actionable_top_score>0 OR l.actionable_signal_count>0))
           OR (l.sha256 IS NULL AND (
-            EXISTS (SELECT 1 FROM body_semantic_scan ss WHERE ss.sha256=c.sha256 AND ss.scan_contract='{SEMANTIC_CONTRACT}' AND (ss.fatal_error!=0 OR ss.actionable_top_score>0 OR ss.actionable_signal_count>0))
+            EXISTS (SELECT 1 FROM body_semantic_scan ss WHERE ss.sha256=c.sha256 AND ss.scan_contract='{SEMANTIC_CONTRACT}' AND ss.fatal_error=0 AND (ss.actionable_top_score>0 OR ss.actionable_signal_count>0))
             OR EXISTS (SELECT 1 FROM body_feature f WHERE f.sha256=c.sha256 AND (f.feature IN ('dynamic_code_shape','flattening_shape','encoded_payload_shape','self_defending_shape','string_table_rotation_shape','wasm_carrier_shape','javascript_obfuscator_names','packer_eval','anti_debug_interval','worker_constructor') OR (f.feature='large_minified' AND c.cohort_count=1)))
           ))
         )
@@ -208,11 +213,16 @@ CANDIDATE_QUERIES = {
         WHERE l.fatal_error>b.fatal_error OR l.actionable_top_score>b.actionable_top_score OR l.actionable_signal_count>b.actionable_signal_count
         ORDER BY (l.actionable_top_score-b.actionable_top_score) DESC, (l.actionable_signal_count-b.actionable_signal_count) DESC, c.sha256
     """,
+    "semantic-invalid": f"""
+        SELECT c.representative_path FROM current_body c JOIN body_semantic_scan ss USING (sha256)
+        WHERE ss.scan_contract='{SEMANTIC_CONTRACT}' AND ss.fatal_error!=0
+        ORDER BY c.bytes DESC, c.sha256
+    """,
     "semantic-actionable": f"""
         SELECT c.representative_path FROM current_body c JOIN body_semantic_scan ss USING (sha256)
-        WHERE ss.scan_contract='{SEMANTIC_CONTRACT}'
-          AND (ss.fatal_error!=0 OR ss.actionable_top_score>0 OR ss.actionable_signal_count>0)
-        ORDER BY ss.fatal_error DESC, ss.actionable_top_score DESC, ss.actionable_signal_count DESC,
+        WHERE ss.scan_contract='{SEMANTIC_CONTRACT}' AND ss.fatal_error=0
+          AND (ss.actionable_top_score>0 OR ss.actionable_signal_count>0)
+        ORDER BY ss.actionable_top_score DESC, ss.actionable_signal_count DESC,
                  c.cohort_count ASC, c.domain_count ASC, c.bytes DESC, c.sha256
     """,
     "semantic-zero": f"""
