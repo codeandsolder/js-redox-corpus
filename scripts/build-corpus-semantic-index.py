@@ -20,6 +20,16 @@ DEFAULT_SUS = JS_REDOX_ROOT / ".cargo-target-nodebug/release/sus-scan"
 SEMANTIC_CONTRACT = "js-sus-scan/v4"
 PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v3"
 
+SEMANTIC_CANDIDATE_NAMES = (
+    "semantic-actionable",
+    "semantic-weak-signals",
+    "semantic-invalid",
+    "semantic-zero",
+    "semantic-untested",
+    "quick-focus",
+    "decode-anomaly",
+)
+
 
 def utc_now() -> str:
     return dt.datetime.now(dt.UTC).isoformat(timespec="microseconds")
@@ -114,7 +124,7 @@ def emit_candidates(db: sqlite3.Connection, directory: Path) -> dict[str, int]:
         raise RuntimeError("could not load catalog builder")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.emit_candidates(db, directory)
+    return module.emit_candidates(db, directory, SEMANTIC_CANDIDATE_NAMES)
 
 
 def chunks(items: list[tuple[str, str]], size: int):

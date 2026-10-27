@@ -767,7 +767,11 @@ def open_database(path: Path) -> sqlite3.Connection:
     return db
 
 
-def emit_candidates(db: sqlite3.Connection, directory: Path) -> dict[str, int]:
+def emit_candidates(
+    db: sqlite3.Connection,
+    directory: Path,
+    names: tuple[str, ...] | None = None,
+) -> dict[str, int]:
     directory.mkdir(parents=True, exist_ok=True)
 
     # The best/latest views use window functions. Re-evaluating those views for
@@ -787,8 +791,14 @@ def emit_candidates(db: sqlite3.Connection, directory: Path) -> dict[str, int]:
         "CREATE INDEX _candidate_latest_sha_contract ON _candidate_analysis_latest(sha256, analysis_contract);",
     ]))
 
+    selected_names = tuple(CANDIDATE_QUERIES) if names is None else names
+    unknown = [name for name in selected_names if name not in CANDIDATE_QUERIES]
+    if unknown:
+        raise ValueError(f"unknown candidate set(s): {', '.join(unknown)}")
+
     counts = {}
-    for name, query in CANDIDATE_QUERIES.items():
+    for name in selected_names:
+        query = CANDIDATE_QUERIES[name]
         query = query.replace("current_body c", "_candidate_current_body c")
         query = query.replace("body_analysis_best", "_candidate_analysis_best")
         query = query.replace("body_analysis_latest", "_candidate_analysis_latest")
