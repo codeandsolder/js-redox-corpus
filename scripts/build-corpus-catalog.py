@@ -244,10 +244,13 @@ CANDIDATE_QUERIES = {
         ORDER BY c.sha256
     """,
     "semantic-untested": f"""
-        SELECT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
-        WHERE s.content_kind LIKE 'javascript%' AND s.nuisance IS NULL
-          AND NOT EXISTS (SELECT 1 FROM body_semantic_scan ss WHERE ss.sha256=c.sha256 AND ss.scan_contract='{SEMANTIC_CONTRACT}')
-        ORDER BY c.cohort_count ASC, c.domain_count ASC, c.bytes DESC, c.sha256
+        SELECT c.representative_path
+        FROM current_body c
+        JOIN body_scan s USING (sha256)
+        LEFT JOIN body_semantic_scan ss
+          ON ss.sha256=c.sha256 AND ss.scan_contract='{SEMANTIC_CONTRACT}'
+        WHERE s.content_kind LIKE 'javascript%' AND s.nuisance IS NULL AND ss.sha256 IS NULL
+        ORDER BY c.sha256
     """,
     "llm-review-zero": f"""
         SELECT c.representative_path FROM current_body c JOIN body_analysis_latest l USING (sha256)
