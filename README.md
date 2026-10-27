@@ -6,6 +6,8 @@ This repository owns the **large/unpinned corpus workflow**: per-hash cataloging
 
 Corpus bodies and generated databases are intentionally not stored in Git.
 
+Current aggregate results are tracked in [`RESULTS.md`](RESULTS.md).
+
 ## Checkout layout
 
 By default the tools expect sibling checkouts:
