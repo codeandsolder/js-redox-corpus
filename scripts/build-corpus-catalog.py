@@ -185,7 +185,7 @@ CANDIDATE_QUERIES = {
         SELECT c.representative_path FROM current_body c JOIN body_analysis_best b USING (sha256)
         WHERE b.analysis_contract = '{PROGRESS_CONTRACT}'
           AND b.fatal_error = 0 AND b.actionable_top_score = 0 AND b.actionable_signal_count = 0
-        ORDER BY c.cohort_count ASC, c.domain_count ASC, c.bytes DESC, c.sha256
+        ORDER BY c.sha256
     """,
     "untested-interesting": f"""
         SELECT DISTINCT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
@@ -241,7 +241,7 @@ CANDIDATE_QUERIES = {
         SELECT c.representative_path FROM current_body c JOIN body_semantic_scan ss USING (sha256)
         WHERE ss.scan_contract='{SEMANTIC_CONTRACT}'
           AND ss.fatal_error=0 AND ss.actionable_top_score=0 AND ss.actionable_signal_count=0
-        ORDER BY c.cohort_count ASC, c.domain_count ASC, c.bytes DESC, c.sha256
+        ORDER BY c.sha256
     """,
     "semantic-untested": f"""
         SELECT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
