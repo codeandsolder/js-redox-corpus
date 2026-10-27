@@ -250,7 +250,8 @@ def main() -> None:
         """
         SELECT COUNT(*),
                SUM(fatal_error=0 AND actionable_top_score=0 AND actionable_signal_count=0),
-               SUM(fatal_error=0 AND (actionable_top_score>0 OR actionable_signal_count>0)),
+               SUM(fatal_error=0 AND actionable_top_score=0 AND actionable_signal_count>0),
+               SUM(fatal_error=0 AND actionable_top_score>0),
                SUM(fatal_error!=0)
         FROM body_semantic_scan ss JOIN current_body c USING (sha256)
         WHERE scan_contract=?
@@ -264,8 +265,9 @@ def main() -> None:
         "newly_scanned": done,
         "current_scanned": int(totals[0] or 0),
         "current_zero": int(totals[1] or 0),
-        "current_actionable": int(totals[2] or 0),
-        "current_invalid": int(totals[3] or 0),
+        "current_weak_signals": int(totals[2] or 0),
+        "current_actionable": int(totals[3] or 0),
+        "current_invalid": int(totals[4] or 0),
         "decode_anomalies": int(db.execute(
             "SELECT COUNT(*) FROM body_semantic_scan WHERE scan_contract=? AND decode_had_errors!=0",
             (SEMANTIC_CONTRACT,),
@@ -284,7 +286,7 @@ def main() -> None:
         ).fetchone()[0]),
         "candidates": {
             name: counts[name]
-            for name in ("semantic-actionable", "semantic-invalid", "semantic-zero", "semantic-untested", "quick-focus")
+            for name in ("semantic-actionable", "semantic-weak-signals", "semantic-invalid", "semantic-zero", "semantic-untested", "quick-focus")
             if name in counts
         },
     }
