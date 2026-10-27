@@ -17,7 +17,7 @@ from corpus_env import CORPUS_ROOT, JS_REDOX_ROOT
 DEFAULT_CORPUS = CORPUS_ROOT
 DEFAULT_DB = DEFAULT_CORPUS / "preclass/corpus.sqlite"
 DEFAULT_CANDIDATES = DEFAULT_CORPUS / "preclass/candidates"
-DEFAULT_DEOB = JS_REDOX_ROOT / ".cargo-target-nodebug/debug/deobfuscate-safe"
+DEFAULT_DEOB = JS_REDOX_ROOT / ".cargo-target-nodebug/release/deobfuscate-safe"
 DEFAULT_STDIO = Path("/home/jan/projects/inference-redox/target/debug/inference-redox-stdio")
 REVIEW_CONTRACT = "js-zero-llm-review/v2"
 ANALYSIS_CONTRACT = "safe-deob+sus/v3"
