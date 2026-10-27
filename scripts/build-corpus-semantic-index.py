@@ -225,7 +225,7 @@ def main() -> None:
             """
             SELECT c.sha256,c.representative_path
             FROM current_body c JOIN body_scan s USING (sha256)
-            WHERE s.content_kind LIKE 'javascript%' AND s.nuisance IS NULL
+            WHERE s.content_kind >= 'javascript' AND s.content_kind < 'javascripu' AND s.nuisance IS NULL
               AND NOT EXISTS (
                 SELECT 1 FROM body_representation_edge e
                 WHERE e.transport_sha256=c.sha256 AND e.evidence LIKE 'exact:%'

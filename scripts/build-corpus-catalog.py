@@ -91,7 +91,7 @@ FEATURES = {
 CANDIDATE_QUERIES = {
     "javascript": """
         SELECT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
-        WHERE s.content_kind LIKE 'javascript%' AND s.nuisance IS NULL
+        WHERE s.content_kind >= 'javascript' AND s.content_kind < 'javascripu' AND s.nuisance IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM body_representation_edge e WHERE e.transport_sha256=c.sha256 AND e.evidence LIKE 'exact:%'
           )
@@ -148,14 +148,14 @@ CANDIDATE_QUERIES = {
     """,
     "rare-javascript": """
         SELECT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
-        WHERE s.content_kind LIKE 'javascript%' AND s.nuisance IS NULL
+        WHERE s.content_kind >= 'javascript' AND s.content_kind < 'javascripu' AND s.nuisance IS NULL
           AND c.cohort_count = 1 AND c.domain_count <= 2
         ORDER BY c.capture_count ASC, c.bytes DESC, c.sha256
     """,
     "interesting": """
         SELECT DISTINCT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
         JOIN body_feature f USING (sha256)
-        WHERE s.nuisance IS NULL AND s.content_kind LIKE 'javascript%' AND (
+        WHERE s.nuisance IS NULL AND s.content_kind >= 'javascript' AND s.content_kind < 'javascripu' AND (
           f.feature IN ('dynamic_code_shape','flattening_shape','encoded_payload_shape','self_defending_shape',
                         'string_table_rotation_shape','wasm_carrier_shape','javascript_obfuscator_names',
                         'packer_eval','anti_debug_interval','worker_constructor')
@@ -190,7 +190,7 @@ CANDIDATE_QUERIES = {
     "untested-interesting": f"""
         SELECT DISTINCT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
         JOIN body_feature f USING (sha256)
-        WHERE s.nuisance IS NULL AND s.content_kind LIKE 'javascript%'
+        WHERE s.nuisance IS NULL AND s.content_kind >= 'javascript' AND s.content_kind < 'javascripu'
           AND NOT EXISTS (SELECT 1 FROM body_analysis_best b WHERE b.sha256=c.sha256 AND b.analysis_contract='{PROGRESS_CONTRACT}')
           AND (f.feature IN ('dynamic_code_shape','flattening_shape','encoded_payload_shape','self_defending_shape','string_table_rotation_shape','wasm_carrier_shape','javascript_obfuscator_names','packer_eval','anti_debug_interval','worker_constructor') OR (f.feature='large_minified' AND c.cohort_count=1))
         ORDER BY c.cohort_count ASC, c.domain_count ASC, c.bytes DESC, c.sha256
@@ -199,7 +199,7 @@ CANDIDATE_QUERIES = {
         SELECT c.representative_path FROM current_body c JOIN body_scan s USING (sha256)
         LEFT JOIN body_analysis_best b ON b.sha256=c.sha256 AND b.analysis_contract='{PROGRESS_CONTRACT}'
         LEFT JOIN body_analysis_latest l ON l.sha256=c.sha256 AND l.analysis_contract='{PROGRESS_CONTRACT}'
-        WHERE s.nuisance IS NULL AND s.content_kind LIKE 'javascript%' AND (
+        WHERE s.nuisance IS NULL AND s.content_kind >= 'javascript' AND s.content_kind < 'javascripu' AND (
           (l.sha256 IS NOT NULL AND l.fatal_error=0 AND l.actionable_top_score>0)
           OR (l.sha256 IS NULL AND (
             EXISTS (SELECT 1 FROM body_semantic_scan ss WHERE ss.sha256=c.sha256 AND ss.scan_contract='{SEMANTIC_CONTRACT}' AND ss.fatal_error=0 AND ss.actionable_top_score>0)
@@ -249,7 +249,7 @@ CANDIDATE_QUERIES = {
         JOIN body_scan s USING (sha256)
         LEFT JOIN body_semantic_scan ss
           ON ss.sha256=c.sha256 AND ss.scan_contract='{SEMANTIC_CONTRACT}'
-        WHERE s.content_kind LIKE 'javascript%' AND s.nuisance IS NULL AND ss.sha256 IS NULL
+        WHERE s.content_kind >= 'javascript' AND s.content_kind < 'javascripu' AND s.nuisance IS NULL AND ss.sha256 IS NULL
         ORDER BY c.sha256
     """,
     "llm-review-zero": f"""
@@ -739,6 +739,7 @@ def open_database(path: Path) -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS current_network_idx ON current_body(network_present);
         CREATE INDEX IF NOT EXISTS scan_kind_idx ON body_scan(content_kind);
         CREATE INDEX IF NOT EXISTS scan_nuisance_idx ON body_scan(nuisance);
+        CREATE INDEX IF NOT EXISTS scan_nuisance_kind_idx ON body_scan(nuisance, content_kind, sha256);
         CREATE INDEX IF NOT EXISTS feature_name_idx ON body_feature(feature);
         CREATE INDEX IF NOT EXISTS cohort_name_idx ON body_cohort(cohort);
         CREATE INDEX IF NOT EXISTS domain_name_idx ON body_domain(domain);
