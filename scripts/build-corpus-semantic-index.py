@@ -26,7 +26,6 @@ SEMANTIC_CANDIDATE_NAMES = (
     "semantic-invalid",
     "semantic-zero",
     "semantic-untested",
-    "quick-focus",
     "decode-anomaly",
 )
 
@@ -296,7 +295,7 @@ def main() -> None:
         ).fetchone()[0]),
         "candidates": {
             name: counts[name]
-            for name in ("semantic-actionable", "semantic-weak-signals", "semantic-invalid", "semantic-zero", "semantic-untested", "quick-focus")
+            for name in ("semantic-actionable", "semantic-weak-signals", "semantic-invalid", "semantic-zero", "semantic-untested")
             if name in counts
         },
     }

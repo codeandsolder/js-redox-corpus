@@ -773,35 +773,45 @@ def emit_candidates(
     names: tuple[str, ...] | None = None,
 ) -> dict[str, int]:
     directory.mkdir(parents=True, exist_ok=True)
-
-    # The best/latest views use window functions. Re-evaluating those views for
-    # every candidate query turns a cheap bookkeeping pass into hours of repeated
-    # sorting on a full corpus. Snapshot them once for this emission and index the
-    # materialized rows; the underlying analysis tables are immutable while the
-    # candidate files are being generated.
-    db.executescript("\n".join([
-        "DROP TABLE IF EXISTS temp._candidate_current_body;",
-        "DROP TABLE IF EXISTS temp._candidate_analysis_best;",
-        "DROP TABLE IF EXISTS temp._candidate_analysis_latest;",
-        "CREATE TEMP TABLE _candidate_current_body AS SELECT c.* FROM current_body c WHERE NOT EXISTS (SELECT 1 FROM body_representation_edge e WHERE e.transport_sha256=c.sha256 AND e.evidence LIKE 'exact:%');",
-        "CREATE UNIQUE INDEX _candidate_current_sha ON _candidate_current_body(sha256);",
-        f"CREATE TEMP TABLE _candidate_analysis_best AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY fatal_error ASC, actionable_top_score ASC, actionable_signal_count ASC, actionable_cluster_count ASC, diagnostics ASC, transform_total DESC, observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{PROGRESS_CONTRACT}') WHERE _rank=1;",
-        f"CREATE TEMP TABLE _candidate_analysis_latest AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{PROGRESS_CONTRACT}') WHERE _rank=1;",
-        "CREATE INDEX _candidate_best_sha_contract ON _candidate_analysis_best(sha256, analysis_contract);",
-        "CREATE INDEX _candidate_latest_sha_contract ON _candidate_analysis_latest(sha256, analysis_contract);",
-    ]))
-
     selected_names = tuple(CANDIDATE_QUERIES) if names is None else names
     unknown = [name for name in selected_names if name not in CANDIDATE_QUERIES]
     if unknown:
         raise ValueError(f"unknown candidate set(s): {', '.join(unknown)}")
 
+    # Every candidate set operates on canonical semantic bodies. Exact transport
+    # aliases stay in provenance but are not re-graded as a second program.
+    db.executescript("\n".join([
+        "DROP TABLE IF EXISTS temp._candidate_current_body;",
+        "CREATE TEMP TABLE _candidate_current_body AS SELECT c.* FROM current_body c WHERE NOT EXISTS (SELECT 1 FROM body_representation_edge e WHERE e.transport_sha256=c.sha256 AND e.evidence LIKE 'exact:%');",
+        "CREATE UNIQUE INDEX _candidate_current_sha ON _candidate_current_body(sha256);",
+    ]))
+
+    needs_analysis = any(
+        "body_analysis_best" in CANDIDATE_QUERIES[name]
+        or "body_analysis_latest" in CANDIDATE_QUERIES[name]
+        for name in selected_names
+    )
+    if needs_analysis:
+        # Windowing the historical analysis ledger is expensive. Only materialize
+        # best/latest snapshots for candidate sets that actually consume them, and
+        # only for the current progress contract. Semantic-only refreshes therefore
+        # avoid this cost entirely.
+        db.executescript("\n".join([
+            "DROP TABLE IF EXISTS temp._candidate_analysis_best;",
+            "DROP TABLE IF EXISTS temp._candidate_analysis_latest;",
+            f"CREATE TEMP TABLE _candidate_analysis_best AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY fatal_error ASC, actionable_top_score ASC, actionable_signal_count ASC, actionable_cluster_count ASC, diagnostics ASC, transform_total DESC, observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{PROGRESS_CONTRACT}') WHERE _rank=1;",
+            f"CREATE TEMP TABLE _candidate_analysis_latest AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{PROGRESS_CONTRACT}') WHERE _rank=1;",
+            "CREATE INDEX _candidate_best_sha_contract ON _candidate_analysis_best(sha256, analysis_contract);",
+            "CREATE INDEX _candidate_latest_sha_contract ON _candidate_analysis_latest(sha256, analysis_contract);",
+        ]))
+
     counts = {}
     for name in selected_names:
         query = CANDIDATE_QUERIES[name]
         query = query.replace("current_body c", "_candidate_current_body c")
-        query = query.replace("body_analysis_best", "_candidate_analysis_best")
-        query = query.replace("body_analysis_latest", "_candidate_analysis_latest")
+        if needs_analysis:
+            query = query.replace("body_analysis_best", "_candidate_analysis_best")
+            query = query.replace("body_analysis_latest", "_candidate_analysis_latest")
         rows = [str(row[0]) for row in db.execute(query)]
         (directory / f"{name}.txt").write_text("".join(f"{path}\n" for path in rows), encoding="utf-8")
         counts[name] = len(rows)
