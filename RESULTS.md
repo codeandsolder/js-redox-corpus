@@ -5,7 +5,8 @@ This is a reproducible progress snapshot for the large `js-redox` browser-JavaSc
 ## Revisions
 
 - `js-redox`: `6735d51c5a14a111a48e349715f31641cee32d95`
-- `js-redox-corpus`: `3671f768f9e4671d4930ce7e6aa601d08f9bdc05`
+- `js-redox-corpus` semantic-v4 tooling: `330e63d`
+- `js-redox-corpus` post-ledger/migration tooling: `3671f76`
 - semantic scanner contract: `js-sus-scan/v4`
 - post-deobfuscation contract: `safe-deob+sus/v2`
 
@@ -64,6 +65,12 @@ The first full post-grade pass changed 174,423 bodies, but only **19,734** bodie
 Notable high-density recoveries include anti-bot/ad-tech code with thousands of deterministic rewrites in a single body. Across the corpus, `string_array_decode` occurred in only 158 bodies but performed **197,177** individual decodes; `from_char_code_alias` occurred in 52 bodies but performed **21,625** rewrites.
 
 A separate **4,718-body** class is valid classic JavaScript containing `with` scope. `jsvm-safe-core` deliberately refuses to rewrite these because static name resolution is not sound under dynamic `with` scope. This is a policy skip, not an unparsable-input class. Current `js-redox` reports that reason explicitly as `dynamic-with-scope`.
+
+The current post-grade ledger now separates all 6,930 safe-deob rejections explicitly:
+
+- **4,718** `dynamic-with-scope` policy skips
+- **2,212** `parse-failure` rejects (2,204 browser-legacy call-assignment sources plus the eight genuinely invalid network responses)
+- **0** remaining generic/unknown safe-deob rejection messages
 
 ## Validation
 
