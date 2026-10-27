@@ -5,8 +5,7 @@ This is a reproducible progress snapshot for the large `js-redox` browser-JavaSc
 ## Revisions
 
 - `js-redox`: `6735d51c5a14a111a48e349715f31641cee32d95`
-- `js-redox-corpus` semantic-v4 tooling: `330e63d`
-- `js-redox-corpus` post-ledger/migration tooling: `3671f76`
+- `js-redox-corpus` semantic/post-grade and candidate tooling: `b517f9f`
 - semantic scanner contract: `js-sus-scan/v4`
 - post-deobfuscation contract: `safe-deob+sus/v2`
 
@@ -18,8 +17,9 @@ After exact transport/runtime representation collapsing, the JavaScript semantic
 
 | Result | Bodies |
 | --- | ---: |
-| Final non-fatal analysis | 254,067 |
-| Final fatal parse | 8 |
+| Zero actionable residual | 208,207 |
+| Actionable residual | 45,860 |
+| Invalid / final fatal parse | 8 |
 | Primary parser originally fatal | 2,236 |
 | Recovered by browser-compatible fallback | 2,228 |
 | Analysis explicitly incomplete because an opaque span was masked | 2,212 |
@@ -32,6 +32,8 @@ Recovery breakdown:
 
 The previous `js-sus-scan/v3` contract had **2,236 fatal bodies**. v4 therefore removes **2,228 / 2,236 = 99.64%** of that parser-fatal bucket without accepting a source that V8 rejects.
 
+Candidate materialization now uses the same canonical semantic-body view as grading: exact transport aliases remain in provenance but are excluded from all candidate sets. After the complete v4 pass, `semantic-untested.txt` is **0**, `semantic-invalid.txt` is **8**, `semantic-actionable.txt` is **45,860**, and post-deob `quick-focus.txt` is **45,832**.
+
 ## Post-deobfuscation grade
 
 The `safe-deob+sus/v2` ledger contains all **254,075** bodies:
@@ -39,10 +41,10 @@ The `safe-deob+sus/v2` ledger contains all **254,075** bodies:
 | Result | Bodies |
 | --- | ---: |
 | Zero residual | 208,235 |
-| Residual or fatal | 45,840 |
-| Final fatal parse | 8 |
+| Actionable residual | 45,832 |
+| Invalid / final fatal parse | 8 |
 
-The previous v1/v3 snapshot was 206,012 zero-residual and 48,063 residual/fatal. Parser compatibility alone therefore moves **2,223 bodies** out of the residual bucket.
+The previous v1/v3 snapshot was 206,012 zero-residual and 48,063 residual/fatal. Under the v2 accounting, the eight V8-invalid network bodies are tracked separately rather than counted as residual work; parser compatibility alone moves **2,223 bodies** out of the old combined residual/fatal bucket.
 
 The v2 migration copied 251,839 previously non-fatal rows unchanged and re-ran only the 2,236 rows whose v3 scanner result had been fatal.
 

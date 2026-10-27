@@ -35,3 +35,16 @@ The initial tooling was extracted from `codeandsolder/js-redox` after these sour
 - `315b3cb` — incremental grading/resume fixes
 
 Analysis rows retain their existing contract identifiers. New default pipeline IDs include both this repository commit and the js-redox engine commit.
+
+## Candidate-set semantics
+
+Candidate materialization operates on canonical semantic bodies. A transport body with an `exact:*` representation edge to a browser/runtime source remains in the provenance database, but is excluded from candidate lists so one executed program is not graded twice under two byte representations.
+
+Fatal parser inputs are tracked separately from analyzable residual work:
+
+- `semantic-invalid.txt` / `known-invalid.txt` — final parser-fatal bodies; retained for provenance/diagnostics, not optimization work.
+- `semantic-actionable.txt` / `known-residual.txt` — non-fatal bodies with actionable deterministic residuals.
+- `semantic-zero.txt` / `known-zero.txt` — non-fatal bodies with no actionable deterministic residuals.
+- `quick-focus.txt` — actionable or otherwise interesting canonical bodies worth improving next; known-invalid bodies are intentionally excluded.
+
+`semantic-untested.txt` should therefore be empty after a complete semantic pass over the canonical corpus. A non-empty file means genuinely missing semantic work, not an alternate transport representation.
