@@ -43,8 +43,9 @@ Candidate materialization operates on canonical semantic bodies. A transport bod
 Fatal parser inputs are tracked separately from analyzable residual work:
 
 - `semantic-invalid.txt` / `known-invalid.txt` — final parser-fatal bodies; retained for provenance/diagnostics, not optimization work.
-- `semantic-actionable.txt` / `known-residual.txt` — non-fatal bodies with actionable deterministic residuals.
-- `semantic-zero.txt` / `known-zero.txt` — non-fatal bodies with no actionable deterministic residuals.
-- `quick-focus.txt` — actionable or otherwise interesting canonical bodies worth improving next; known-invalid bodies are intentionally excluded.
+- `semantic-actionable.txt` / `known-residual.txt` — non-fatal bodies with at least one actionable cluster (`actionable_top_score > 0`).
+- `semantic-weak-signals.txt` / `known-weak-signals.txt` — non-fatal bodies with actionable primitives that never form a cluster at the configured threshold. Evidence is preserved, but these do not count as residual debt.
+- `semantic-zero.txt` / `known-zero.txt` — non-fatal bodies with no actionable signals at all.
+- `quick-focus.txt` — clustered residual work worth improving next; weak-only and known-invalid bodies are intentionally excluded.
 
 `semantic-untested.txt` should therefore be empty after a complete semantic pass over the canonical corpus. A non-empty file means genuinely missing semantic work, not an alternate transport representation.

@@ -5,7 +5,7 @@ This is a reproducible progress snapshot for the large `js-redox` browser-JavaSc
 ## Revisions
 
 - `js-redox`: `6735d51c5a14a111a48e349715f31641cee32d95`
-- `js-redox-corpus` semantic/post-grade and candidate tooling: `b517f9f`
+- `js-redox-corpus` semantic/post-grade and candidate tooling: `95e3ee9`
 - semantic scanner contract: `js-sus-scan/v4`
 - post-deobfuscation contract: `safe-deob+sus/v2`
 
@@ -17,8 +17,9 @@ After exact transport/runtime representation collapsing, the JavaScript semantic
 
 | Result | Bodies |
 | --- | ---: |
-| Zero actionable residual | 208,207 |
-| Actionable residual | 45,860 |
+| No actionable signals | 208,207 |
+| Weak signals only (below cluster threshold) | 21,789 |
+| Clustered actionable residual | 24,071 |
 | Invalid / final fatal parse | 8 |
 | Primary parser originally fatal | 2,236 |
 | Recovered by browser-compatible fallback | 2,228 |
@@ -32,7 +33,7 @@ Recovery breakdown:
 
 The previous `js-sus-scan/v3` contract had **2,236 fatal bodies**. v4 therefore removes **2,228 / 2,236 = 99.64%** of that parser-fatal bucket without accepting a source that V8 rejects.
 
-Candidate materialization now uses the same canonical semantic-body view as grading: exact transport aliases remain in provenance but are excluded from all candidate sets. After the complete v4 pass, `semantic-untested.txt` is **0**, `semantic-invalid.txt` is **8**, `semantic-actionable.txt` is **45,860**, and post-deob `quick-focus.txt` is **45,832**.
+Candidate materialization now uses the same canonical semantic-body view as grading: exact transport aliases remain in provenance but are excluded from all candidate sets. Weak actionable primitives are retained separately instead of bypassing the scanner's cluster threshold. After the complete v4 pass, `semantic-untested.txt` is **0**, `semantic-invalid.txt` is **8**, `semantic-weak-signals.txt` is **21,789**, `semantic-actionable.txt` is **24,071**, and post-deob `quick-focus.txt` is **24,028**.
 
 ## Post-deobfuscation grade
 
@@ -40,13 +41,16 @@ The `safe-deob+sus/v2` ledger contains all **254,075** bodies:
 
 | Result | Bodies |
 | --- | ---: |
-| Zero residual | 208,235 |
-| Actionable residual | 45,832 |
+| No actionable signals | 208,235 |
+| Weak signals only (below cluster threshold) | 21,804 |
+| Clustered actionable residual | 24,028 |
 | Invalid / final fatal parse | 8 |
 
 The previous v1/v3 snapshot was 206,012 zero-residual and 48,063 residual/fatal. Under the v2 accounting, the eight V8-invalid network bodies are tracked separately rather than counted as residual work; parser compatibility alone moves **2,223 bodies** out of the old combined residual/fatal bucket.
 
 The v2 migration copied 251,839 previously non-fatal rows unchanged and re-ran only the 2,236 rows whose v3 scanner result had been fatal.
+
+Residual debt now follows the scanner's own cluster threshold: a body with isolated actionable primitives but `actionable_top_score = 0` is kept in the weak-signals population rather than `quick-focus`. This removes **21,804** below-threshold bodies from the post-deob work queue without discarding their evidence.
 
 ## Decode / representation provenance
 
@@ -83,3 +87,7 @@ For the v4 browser-legacy recovery, the complete old fatal set was checked again
 - V8 rejects the same final eight that v4 leaves fatal.
 
 The engine-side regression suite also covers legacy call-assignment recovery, classic-script fallback, and a genuinely invalid non-call assignment that must remain fatal.
+
+## Operational performance
+
+- No-op semantic resume/corpus accounting dropped from about **97 s** to about **21 s** on the same busy Acer after selective candidate refreshes, contract-scoped snapshots, canonical-body materialization, and an indexed `(nuisance, content_kind, sha256)` JavaScript scan path.
