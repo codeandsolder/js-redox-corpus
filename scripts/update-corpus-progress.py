@@ -2,7 +2,7 @@
 """Run safe deobfuscation + semantic suspiciousness scan and persist per-body progress."""
 from __future__ import annotations
 import argparse, datetime as dt, hashlib, importlib.util, json, os, sqlite3, subprocess, tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from corpus_env import CORPUS_ROOT, JS_REDOX_ROOT, REPO_ROOT
 ROOT=REPO_ROOT
@@ -85,14 +85,18 @@ def parse_sus(stdout):
  files=payload.get('files') or []
  if len(files)!=1: raise RuntimeError(f'expected one sus-scan file report, got {len(files)}')
  return files[0]
-def analyze_one(path,deob,sus,contract,pipeline):
+def analyze_one(path,deob,sus,contract,pipeline,deob_timeout):
  input_sha=sha256_file(path)
  with tempfile.TemporaryDirectory(prefix='js-redox-progress-') as tmp:
   work=Path(tmp); output=work/f'{input_sha}.js'; report_path=work/'deob.json'
-  cp=subprocess.run([str(deob),str(path),str(output),'--report',str(report_path)],text=True,capture_output=True)
   deob_error=None; deob_report=None
-  if cp.returncode==0 and report_path.is_file() and output.is_file(): deob_report=json.loads(report_path.read_text()); scan_path=output
-  else: deob_error=(cp.stderr or cp.stdout or f'exit {cp.returncode}').strip()[:4000]; scan_path=path
+  try:
+   cp=subprocess.run([str(deob),str(path),str(output),'--report',str(report_path)],text=True,capture_output=True,timeout=deob_timeout)
+  except subprocess.TimeoutExpired:
+   cp=None; deob_error=f'timeout after {deob_timeout:g}s'; scan_path=path
+  if cp is not None:
+   if cp.returncode==0 and report_path.is_file() and output.is_file(): deob_report=json.loads(report_path.read_text()); scan_path=output
+   else: deob_error=(cp.stderr or cp.stdout or f'exit {cp.returncode}').strip()[:4000]; scan_path=path
   sp=subprocess.run([str(sus),'--json',str(scan_path)],text=True,capture_output=True)
   if sp.returncode!=0: raise RuntimeError(f'sus-scan failed for {path}: {(sp.stderr or sp.stdout).strip()}')
   sf=parse_sus(sp.stdout); transforms=dict((deob_report or {}).get('transforms') or {})
@@ -106,8 +110,9 @@ def write_row(db,row):
 def refresh_candidate_lists(db,directory):
  spec=importlib.util.spec_from_file_location('catalog_builder',ROOT/'scripts/build-corpus-catalog.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module.emit_candidates(db,directory,POST_CANDIDATE_NAMES)
 def main():
- ap=argparse.ArgumentParser(); ap.add_argument('--database',type=Path,default=DEFAULT_DB); ap.add_argument('--candidate-dir',type=Path,default=DEFAULT_CANDIDATES); src=ap.add_mutually_exclusive_group(); src.add_argument('--candidate',default='quick-focus'); src.add_argument('--paths-file',type=Path); ap.add_argument('--deobfuscate-safe',type=Path,default=DEFAULT_DEOB); ap.add_argument('--sus-scan',type=Path,default=DEFAULT_SUS); ap.add_argument('--analysis-contract',default=ANALYSIS_CONTRACT); ap.add_argument('--pipeline-id'); ap.add_argument('--force',action='store_true'); ap.add_argument('--skip-candidate-refresh',action='store_true'); ap.add_argument('--jobs',type=int,default=1); ap.add_argument('--limit',type=int,default=0); ap.add_argument('--nice',type=int,default=10); args=ap.parse_args()
+ ap=argparse.ArgumentParser(); ap.add_argument('--database',type=Path,default=DEFAULT_DB); ap.add_argument('--candidate-dir',type=Path,default=DEFAULT_CANDIDATES); src=ap.add_mutually_exclusive_group(); src.add_argument('--candidate',default='quick-focus'); src.add_argument('--paths-file',type=Path); ap.add_argument('--deobfuscate-safe',type=Path,default=DEFAULT_DEOB); ap.add_argument('--sus-scan',type=Path,default=DEFAULT_SUS); ap.add_argument('--analysis-contract',default=ANALYSIS_CONTRACT); ap.add_argument('--pipeline-id'); ap.add_argument('--force',action='store_true'); ap.add_argument('--skip-candidate-refresh',action='store_true'); ap.add_argument('--jobs',type=int,default=1); ap.add_argument('--deob-timeout-seconds',type=float,default=60.0); ap.add_argument('--limit',type=int,default=0); ap.add_argument('--nice',type=int,default=10); args=ap.parse_args()
  if args.jobs<1: raise SystemExit('--jobs must be >= 1')
+ if args.deob_timeout_seconds<=0: raise SystemExit('--deob-timeout-seconds must be > 0')
  if args.nice: os.nice(args.nice)
  for b in (args.deobfuscate_safe,args.sus_scan):
   if not b.is_file(): raise SystemExit(f'missing analyzer binary: {b}')
@@ -115,8 +120,9 @@ def main():
  if migrated: print(f'analysis migrated={migrated} {PREVIOUS_ANALYSIS_CONTRACT}->{args.analysis_contract}',flush=True)
  current_by_path={r[1]:r[0] for r in db.execute('SELECT sha256, representative_path FROM current_body')}; current=set(current_by_path.values()); requested=len(paths); existing=set() if args.force else {r[0] for r in db.execute('SELECT sha256 FROM body_analysis_run WHERE analysis_contract=? AND pipeline_id=?',(args.analysis_contract,pipe))}; paths=[p for p in paths if current_by_path.get(str(p)) not in existing]; skipped_existing=requested-len(paths); done=0; errors=[]
  with ThreadPoolExecutor(max_workers=args.jobs) as pool:
-  futures=[(p,pool.submit(analyze_one,p,args.deobfuscate_safe,args.sus_scan,args.analysis_contract,pipe)) for p in paths]
-  for p,f in futures:
+  futures={pool.submit(analyze_one,p,args.deobfuscate_safe,args.sus_scan,args.analysis_contract,pipe,args.deob_timeout_seconds):p for p in paths}
+  for f in as_completed(futures):
+   p=futures[f]
    try:
     row=f.result()
     if row['sha256'] not in current: raise RuntimeError(f"input hash is not in current corpus: {row['sha256']}")
