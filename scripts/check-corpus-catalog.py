@@ -98,6 +98,9 @@ def main() -> None:
         javascript_paths = (candidates / "javascript.txt").read_text().splitlines()
         assert str(captures / "0003-legacy-script-fedcba9876/resources/client.js") not in javascript_paths
         assert str(captures / "0003-legacy-script-fedcba9876/runtime-scripts" / f"{browser_source_hash}.js") in javascript_paths
+        semantic_untested_paths = (candidates / "semantic-untested.txt").read_text().splitlines()
+        assert str(captures / "0003-legacy-script-fedcba9876/resources/client.js") not in semantic_untested_paths
+        assert str(captures / "0003-legacy-script-fedcba9876/runtime-scripts" / f"{browser_source_hash}.js") in semantic_untested_paths
         assert len((candidates / "dynamic-code.txt").read_text().splitlines()) == 1
         assert len((candidates / "obfuscation.txt").read_text().splitlines()) == 1
         assert len((candidates / "interesting.txt").read_text().splitlines()) == 1

@@ -764,8 +764,11 @@ def emit_candidates(db: sqlite3.Connection, directory: Path) -> dict[str, int]:
     # materialized rows; the underlying analysis tables are immutable while the
     # candidate files are being generated.
     db.executescript("\n".join([
+        "DROP TABLE IF EXISTS temp._candidate_current_body;",
         "DROP TABLE IF EXISTS temp._candidate_analysis_best;",
         "DROP TABLE IF EXISTS temp._candidate_analysis_latest;",
+        "CREATE TEMP TABLE _candidate_current_body AS SELECT c.* FROM current_body c WHERE NOT EXISTS (SELECT 1 FROM body_representation_edge e WHERE e.transport_sha256=c.sha256 AND e.evidence LIKE 'exact:%');",
+        "CREATE UNIQUE INDEX _candidate_current_sha ON _candidate_current_body(sha256);",
         "CREATE TEMP TABLE _candidate_analysis_best AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256, analysis_contract ORDER BY fatal_error ASC, actionable_top_score ASC, actionable_signal_count ASC, actionable_cluster_count ASC, diagnostics ASC, transform_total DESC, observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run) WHERE _rank=1;",
         "CREATE TEMP TABLE _candidate_analysis_latest AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256, analysis_contract ORDER BY observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run) WHERE _rank=1;",
         "CREATE INDEX _candidate_best_sha_contract ON _candidate_analysis_best(sha256, analysis_contract);",
@@ -774,6 +777,7 @@ def emit_candidates(db: sqlite3.Connection, directory: Path) -> dict[str, int]:
 
     counts = {}
     for name, query in CANDIDATE_QUERIES.items():
+        query = query.replace("current_body c", "_candidate_current_body c")
         query = query.replace("body_analysis_best", "_candidate_analysis_best")
         query = query.replace("body_analysis_latest", "_candidate_analysis_latest")
         rows = [str(row[0]) for row in db.execute(query)]
