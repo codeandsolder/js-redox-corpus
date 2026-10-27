@@ -25,7 +25,6 @@ SEMANTIC_CANDIDATE_NAMES = (
     "semantic-weak-signals",
     "semantic-invalid",
     "semantic-zero",
-    "semantic-untested",
     "decode-anomaly",
 )
 
@@ -221,7 +220,7 @@ def main() -> None:
     migrated = migrate_previous_contract(db)
     if migrated:
         print(f"semantic migrated={migrated} {PREVIOUS_SEMANTIC_CONTRACT}->{SEMANTIC_CONTRACT}", flush=True)
-    pending = list(
+    all_pending = list(
         db.execute(
             """
             SELECT c.sha256,c.representative_path
@@ -240,8 +239,7 @@ def main() -> None:
             (SEMANTIC_CONTRACT,),
         )
     )
-    if args.limit:
-        pending = pending[:args.limit]
+    pending = all_pending[:args.limit] if args.limit else all_pending
     print(f"semantic pending={len(pending)} contract={SEMANTIC_CONTRACT}", flush=True)
     done = 0
     work = list(chunks(pending, args.chunk_size))
@@ -255,6 +253,17 @@ def main() -> None:
             print(f"semantic {done}/{len(pending)} jobs={args.jobs}", flush=True)
 
     counts = {} if args.skip_candidate_refresh else emit_candidates(db, args.candidate_dir)
+    if not args.skip_candidate_refresh:
+        # We already computed the complete canonical untested set before scanning.
+        # Avoid proving the same absence again with hundreds of thousands of indexed
+        # anti-joins: after a successful run only the deliberately unprocessed tail
+        # can remain untested. all_pending is SHA-ordered, so the file is stable.
+        remaining_untested = all_pending[len(pending):]
+        args.candidate_dir.mkdir(parents=True, exist_ok=True)
+        (args.candidate_dir / "semantic-untested.txt").write_text(
+            "".join(f"{path}\n" for _, path in remaining_untested), encoding="utf-8"
+        )
+        counts["semantic-untested"] = len(remaining_untested)
     totals = db.execute(
         """
         SELECT COUNT(*),
