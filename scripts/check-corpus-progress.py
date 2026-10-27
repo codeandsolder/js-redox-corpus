@@ -17,7 +17,7 @@ a=sys.argv[1:]; inp=Path(a[0]); out=Path(a[1]); report=Path(a[a.index('--report'
 """); deob.chmod(0o755)
   sus=w/'sus'; sus.write_text("""#!/usr/bin/env python3
 import json,sys
-path=sys.argv[-1]; print(json.dumps({'schema':'js-sus-scan/v3','files':[{'input':path,'bytes':1,'diagnostics':0,'fatal_error':False,'signal_count':5,'signal_kinds':{'eval':2},'top_score':17,'clusters':[{'score':17}],'actionable_signal_count':3,'actionable_signal_kinds':{'dynamic_code_call':3},'actionable_top_score':15,'actionable_clusters':[{'score':15}]}]}))
+path=sys.argv[-1]; print(json.dumps({'schema':'js-sus-scan/v4','files':[{'input':path,'bytes':1,'diagnostics':0,'fatal_error':False,'signal_count':5,'signal_kinds':{'eval':2},'top_score':17,'clusters':[{'score':17}],'actionable_signal_count':3,'actionable_signal_kinds':{'dynamic_code_call':3},'actionable_top_score':15,'actionable_clusters':[{'score':15}]}]}))
 """); sus.chmod(0o755)
   semantic=subprocess.run([sys.executable,str(SEMANTIC),'--database',str(db),'--candidate-dir',str(cand),'--sus-scan',str(sus),'--chunk-size','1','--nice','0'],check=True,text=True,capture_output=True)
   sem_report=json.loads(semantic.stdout[semantic.stdout.index('{'):]); assert sem_report['newly_scanned']==1,sem_report

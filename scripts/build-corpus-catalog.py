@@ -36,7 +36,7 @@ def whatwg_windows_1252(raw: bytes) -> bytes:
     return raw.decode("latin1").translate(WINDOWS_1252_C1).encode("utf-8")
 
 PROGRESS_CONTRACT = "safe-deob+sus/v1"
-SEMANTIC_CONTRACT = "js-sus-scan/v3"
+SEMANTIC_CONTRACT = "js-sus-scan/v4"
 
 TRIVIAL_ANONYMOUS = {
     "", "[]", "{}", "({})", "null", "undefined", "true", "false", "0", "1",
@@ -659,6 +659,8 @@ def open_database(path: Path) -> sqlite3.Connection:
           actionable_signal_kinds_json TEXT NOT NULL,
           decode_encoding TEXT NOT NULL DEFAULT 'UTF-8', decode_source TEXT NOT NULL DEFAULT 'legacy',
           decode_had_errors INTEGER NOT NULL DEFAULT 0, decode_uncertain INTEGER NOT NULL DEFAULT 0,
+          parser_fatal_error INTEGER NOT NULL DEFAULT 0, analysis_complete INTEGER NOT NULL DEFAULT 1,
+          parse_recovery TEXT, opaque_parse_spans_json TEXT NOT NULL DEFAULT '[]',
           PRIMARY KEY (sha256, scan_contract)
         );
         CREATE TABLE IF NOT EXISTS body_representation_edge (
@@ -720,6 +722,10 @@ def open_database(path: Path) -> sqlite3.Connection:
         "decode_source": "TEXT NOT NULL DEFAULT 'legacy'",
         "decode_had_errors": "INTEGER NOT NULL DEFAULT 0",
         "decode_uncertain": "INTEGER NOT NULL DEFAULT 0",
+        "parser_fatal_error": "INTEGER NOT NULL DEFAULT 0",
+        "analysis_complete": "INTEGER NOT NULL DEFAULT 1",
+        "parse_recovery": "TEXT",
+        "opaque_parse_spans_json": "TEXT NOT NULL DEFAULT '[]'",
     }
     for name, declaration in additions.items():
         if name not in semantic_columns:

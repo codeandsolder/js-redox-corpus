@@ -17,8 +17,8 @@ DEFAULT_CORPUS = CORPUS_ROOT
 DEFAULT_DB = DEFAULT_CORPUS / "preclass/corpus.sqlite"
 DEFAULT_CANDIDATES = DEFAULT_CORPUS / "preclass/candidates"
 DEFAULT_SUS = JS_REDOX_ROOT / ".cargo-target-nodebug/release/sus-scan"
-SEMANTIC_CONTRACT = "js-sus-scan/v3"
-PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v2"
+SEMANTIC_CONTRACT = "js-sus-scan/v4"
+PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v3"
 
 
 def utc_now() -> str:
@@ -59,6 +59,10 @@ def ensure_schema(db: sqlite3.Connection) -> None:
         "decode_source": "TEXT NOT NULL DEFAULT 'legacy'",
         "decode_had_errors": "INTEGER NOT NULL DEFAULT 0",
         "decode_uncertain": "INTEGER NOT NULL DEFAULT 0",
+        "parser_fatal_error": "INTEGER NOT NULL DEFAULT 0",
+        "analysis_complete": "INTEGER NOT NULL DEFAULT 1",
+        "parse_recovery": "TEXT",
+        "opaque_parse_spans_json": "TEXT NOT NULL DEFAULT '[]'",
     }
     for name, declaration in additions.items():
         if name not in columns:
@@ -66,12 +70,12 @@ def ensure_schema(db: sqlite3.Connection) -> None:
 
 
 def migrate_previous_contract(db: sqlite3.Connection) -> int:
-    """Carry forward v2 rows whose decoding semantics provably did not change.
+    """Carry forward v3 rows whose parser behavior provably did not change.
 
-    v2 only reached a non-fatal report through strict UTF-8 decoding. Therefore
-    every non-fatal v2 row has the same source text under v3 and can be copied
-    without re-running the scanner. Fatal rows are deliberately re-scanned:
-    they include both genuine parser failures and the old invalid-UTF-8 cases.
+    v4 adds browser-legacy recovery only after a v3-fatal parse. Every non-fatal
+    v3 row therefore has the same AST/signals under v4 and can be copied without
+    scanning. Old fatal rows are deliberately re-scanned to classify classic
+    fallback, opaque browser-legacy recovery, or genuine fatal syntax.
     """
     before = db.total_changes
     with db:
@@ -82,12 +86,14 @@ def migrate_previous_contract(db: sqlite3.Connection) -> int:
               raw_signal_count,raw_cluster_count,raw_top_score,raw_signal_kinds_json,
               actionable_signal_count,actionable_cluster_count,actionable_top_score,
               actionable_signal_kinds_json,decode_encoding,decode_source,
-              decode_had_errors,decode_uncertain
+              decode_had_errors,decode_uncertain,parser_fatal_error,analysis_complete,
+              parse_recovery,opaque_parse_spans_json
             )
             SELECT old.sha256,?,old.scanned_at,old.diagnostics,old.fatal_error,
                    old.raw_signal_count,old.raw_cluster_count,old.raw_top_score,old.raw_signal_kinds_json,
                    old.actionable_signal_count,old.actionable_cluster_count,old.actionable_top_score,
-                   old.actionable_signal_kinds_json,'UTF-8','already-unicode',0,0
+                   old.actionable_signal_kinds_json,old.decode_encoding,old.decode_source,
+                   old.decode_had_errors,old.decode_uncertain,0,1,NULL,'[]'
             FROM body_semantic_scan old
             WHERE old.scan_contract=? AND old.fatal_error=0
               AND EXISTS (SELECT 1 FROM current_body c WHERE c.sha256=old.sha256)
@@ -145,6 +151,10 @@ def scan_chunk(binary: Path, chunk: list[tuple[str, str]]) -> list[dict]:
                 "decode_source": str(row.get("decode_source") or "legacy"),
                 "decode_had_errors": int(bool(row.get("decode_had_errors"))),
                 "decode_uncertain": int(bool(row.get("decode_uncertain"))),
+                "parser_fatal_error": int(bool(row.get("parser_fatal_error"))),
+                "analysis_complete": int(row.get("analysis_complete", True) is not False),
+                "parse_recovery": row.get("parse_recovery"),
+                "opaque_parse_spans_json": json.dumps(row.get("opaque_parse_spans") or [], sort_keys=True, separators=(",", ":")),
                 "diagnostics": int(row.get("diagnostics") or 0),
                 "fatal_error": int(bool(row.get("fatal_error"))),
                 "raw_signal_count": int(row.get("signal_count") or 0),
@@ -166,7 +176,8 @@ def store(db: sqlite3.Connection, rows: list[dict]) -> None:
         "raw_signal_count", "raw_cluster_count", "raw_top_score", "raw_signal_kinds_json",
         "actionable_signal_count", "actionable_cluster_count", "actionable_top_score",
         "actionable_signal_kinds_json", "decode_encoding", "decode_source",
-        "decode_had_errors", "decode_uncertain",
+        "decode_had_errors", "decode_uncertain", "parser_fatal_error", "analysis_complete",
+        "parse_recovery", "opaque_parse_spans_json",
     )
     columns = ",".join(keys)
     placeholders = ",".join("?" for _ in keys)
@@ -185,6 +196,7 @@ def main() -> None:
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--nice", type=int, default=10)
+    parser.add_argument("--skip-candidate-refresh", action="store_true")
     args = parser.parse_args()
     if args.chunk_size < 1:
         raise SystemExit("--chunk-size must be >= 1")
@@ -233,7 +245,7 @@ def main() -> None:
             done += len(rows)
             print(f"semantic {done}/{len(pending)} jobs={args.jobs}", flush=True)
 
-    counts = emit_candidates(db, args.candidate_dir)
+    counts = {} if args.skip_candidate_refresh else emit_candidates(db, args.candidate_dir)
     totals = db.execute(
         """
         SELECT COUNT(*),
@@ -254,6 +266,18 @@ def main() -> None:
         "current_actionable": int(totals[2] or 0),
         "decode_anomalies": int(db.execute(
             "SELECT COUNT(*) FROM body_semantic_scan WHERE scan_contract=? AND decode_had_errors!=0",
+            (SEMANTIC_CONTRACT,),
+        ).fetchone()[0]),
+        "parser_fatal_inputs": int(db.execute(
+            "SELECT COUNT(*) FROM body_semantic_scan WHERE scan_contract=? AND parser_fatal_error!=0",
+            (SEMANTIC_CONTRACT,),
+        ).fetchone()[0]),
+        "parse_recovered": int(db.execute(
+            "SELECT COUNT(*) FROM body_semantic_scan WHERE scan_contract=? AND parse_recovery IS NOT NULL",
+            (SEMANTIC_CONTRACT,),
+        ).fetchone()[0]),
+        "incomplete_analysis": int(db.execute(
+            "SELECT COUNT(*) FROM body_semantic_scan WHERE scan_contract=? AND analysis_complete=0",
             (SEMANTIC_CONTRACT,),
         ).fetchone()[0]),
         "candidates": {
