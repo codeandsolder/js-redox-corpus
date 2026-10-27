@@ -39,6 +39,10 @@ def ensure_schema(db):
 
 def migrate_previous_contract(db,contract,pipe):
  if contract!=ANALYSIS_CONTRACT:return 0
+ # Contract migration is a one-time bootstrap. Once any v2 rows exist,
+ # subsequent engine/tool commits must create fresh analysis rows only for the
+ # explicitly scheduled inputs rather than cloning the entire v1 ledger again.
+ if db.execute('SELECT 1 FROM body_analysis_run WHERE analysis_contract=? LIMIT 1',(contract,)).fetchone(): return 0
  before=db.total_changes
  with db:
   db.execute("""
