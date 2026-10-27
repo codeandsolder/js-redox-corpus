@@ -36,7 +36,7 @@ def whatwg_windows_1252(raw: bytes) -> bytes:
     return raw.decode("latin1").translate(WINDOWS_1252_C1).encode("utf-8")
 
 PROGRESS_CONTRACT = "safe-deob+sus/v3"
-SEMANTIC_CONTRACT = "js-sus-scan/v5"
+SEMANTIC_CONTRACT = "js-sus-scan/v6"
 
 TRIVIAL_ANONYMOUS = {
     "", "[]", "{}", "({})", "null", "undefined", "true", "false", "0", "1",

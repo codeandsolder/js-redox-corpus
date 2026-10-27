@@ -17,8 +17,8 @@ DEFAULT_CORPUS = CORPUS_ROOT
 DEFAULT_DB = DEFAULT_CORPUS / "preclass/corpus.sqlite"
 DEFAULT_CANDIDATES = DEFAULT_CORPUS / "preclass/candidates"
 DEFAULT_SUS = JS_REDOX_ROOT / ".cargo-target-nodebug/release/sus-scan"
-SEMANTIC_CONTRACT = "js-sus-scan/v5"
-PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v4"
+SEMANTIC_CONTRACT = "js-sus-scan/v6"
+PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v5"
 
 SEMANTIC_CANDIDATE_NAMES = (
     "semantic-actionable",
@@ -78,13 +78,7 @@ def ensure_schema(db: sqlite3.Connection) -> None:
 
 
 def migrate_previous_contract(db: sqlite3.Connection) -> int:
-    """Carry forward v4 rows unaffected by the v5 codec-signal policy.
-
-    v5 keeps parser/decoder behavior unchanged, but generic dynamic char-code,
-    base64-decoder, and radix-conversion calls stop being actionable on their
-    own. Rows containing any of those old actionable kinds must be re-scanned
-    because cluster scores can change; every other non-fatal v4 row is exact.
-    """
+    """Carry forward v5 rows unaffected by the v6 blob actionability policy."""
     before = db.total_changes
     with db:
         db.execute(
@@ -105,9 +99,8 @@ def migrate_previous_contract(db: sqlite3.Connection) -> int:
                    old.parse_recovery,old.opaque_parse_spans_json
             FROM body_semantic_scan old
             WHERE old.scan_contract=? AND old.fatal_error=0
-              AND old.actionable_signal_kinds_json NOT LIKE '%"charcode_decode_call"%'
-              AND old.actionable_signal_kinds_json NOT LIKE '%"base64_decode_call"%'
-              AND old.actionable_signal_kinds_json NOT LIKE '%"radix_string_call"%'
+              AND old.actionable_signal_kinds_json NOT LIKE '%"base64_blob"%'
+              AND old.actionable_signal_kinds_json NOT LIKE '%"opaque_blob"%'
               AND EXISTS (SELECT 1 FROM current_body c WHERE c.sha256=old.sha256)
               AND NOT EXISTS (
                 SELECT 1 FROM body_representation_edge e
