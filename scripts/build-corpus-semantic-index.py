@@ -17,8 +17,8 @@ DEFAULT_CORPUS = CORPUS_ROOT
 DEFAULT_DB = DEFAULT_CORPUS / "preclass/corpus.sqlite"
 DEFAULT_CANDIDATES = DEFAULT_CORPUS / "preclass/candidates"
 DEFAULT_SUS = JS_REDOX_ROOT / ".cargo-target-nodebug/release/sus-scan"
-SEMANTIC_CONTRACT = "js-sus-scan/v4"
-PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v3"
+SEMANTIC_CONTRACT = "js-sus-scan/v5"
+PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v4"
 
 SEMANTIC_CANDIDATE_NAMES = (
     "semantic-actionable",
@@ -78,12 +78,12 @@ def ensure_schema(db: sqlite3.Connection) -> None:
 
 
 def migrate_previous_contract(db: sqlite3.Connection) -> int:
-    """Carry forward v3 rows whose parser behavior provably did not change.
+    """Carry forward v4 rows unaffected by the v5 codec-signal policy.
 
-    v4 adds browser-legacy recovery only after a v3-fatal parse. Every non-fatal
-    v3 row therefore has the same AST/signals under v4 and can be copied without
-    scanning. Old fatal rows are deliberately re-scanned to classify classic
-    fallback, opaque browser-legacy recovery, or genuine fatal syntax.
+    v5 keeps parser/decoder behavior unchanged, but generic dynamic char-code,
+    base64-decoder, and radix-conversion calls stop being actionable on their
+    own. Rows containing any of those old actionable kinds must be re-scanned
+    because cluster scores can change; every other non-fatal v4 row is exact.
     """
     before = db.total_changes
     with db:
@@ -101,9 +101,13 @@ def migrate_previous_contract(db: sqlite3.Connection) -> int:
                    old.raw_signal_count,old.raw_cluster_count,old.raw_top_score,old.raw_signal_kinds_json,
                    old.actionable_signal_count,old.actionable_cluster_count,old.actionable_top_score,
                    old.actionable_signal_kinds_json,old.decode_encoding,old.decode_source,
-                   old.decode_had_errors,old.decode_uncertain,0,1,NULL,'[]'
+                   old.decode_had_errors,old.decode_uncertain,old.parser_fatal_error,old.analysis_complete,
+                   old.parse_recovery,old.opaque_parse_spans_json
             FROM body_semantic_scan old
             WHERE old.scan_contract=? AND old.fatal_error=0
+              AND old.actionable_signal_kinds_json NOT LIKE '%"charcode_decode_call"%'
+              AND old.actionable_signal_kinds_json NOT LIKE '%"base64_decode_call"%'
+              AND old.actionable_signal_kinds_json NOT LIKE '%"radix_string_call"%'
               AND EXISTS (SELECT 1 FROM current_body c WHERE c.sha256=old.sha256)
               AND NOT EXISTS (
                 SELECT 1 FROM body_representation_edge e

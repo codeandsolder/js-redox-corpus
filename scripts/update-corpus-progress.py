@@ -7,7 +7,7 @@ from pathlib import Path
 from corpus_env import CORPUS_ROOT, JS_REDOX_ROOT, REPO_ROOT
 ROOT=REPO_ROOT
 DEFAULT_CORPUS=CORPUS_ROOT; DEFAULT_DB=DEFAULT_CORPUS/'preclass/corpus.sqlite'; DEFAULT_CANDIDATES=DEFAULT_CORPUS/'preclass/candidates'
-DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v2'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v1'; SUS_CONTRACT='js-sus-scan/v4'
+DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v3'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v2'; SUS_CONTRACT='js-sus-scan/v5'
 POST_CANDIDATE_NAMES=('known-invalid','known-residual','known-weak-signals','known-zero','untested-interesting','quick-focus','regressed-from-best','llm-review-zero')
 def sha256_file(path):
  d=hashlib.sha256();
@@ -40,7 +40,7 @@ def ensure_schema(db):
 
 def migrate_previous_contract(db,contract,pipe):
  if contract!=ANALYSIS_CONTRACT:return 0
- # Contract migration is a one-time bootstrap. Once any v2 rows exist,
+ # Contract migration is a one-time bootstrap. Once any v3 rows exist,
  # subsequent engine/tool commits must create fresh analysis rows only for the
  # explicitly scheduled inputs rather than cloning the entire v1 ledger again.
  if db.execute('SELECT 1 FROM body_analysis_run WHERE analysis_contract=? LIMIT 1',(contract,)).fetchone(): return 0
@@ -57,9 +57,12 @@ def migrate_previous_contract(db,contract,pipe):
    deob_changed,deob_iterations,transform_total,transforms_json,deob_error,diagnostics,fatal_error,
    raw_signal_count,raw_cluster_count,raw_top_score,raw_signal_kinds_json,actionable_signal_count,
    actionable_cluster_count,actionable_top_score,actionable_signal_kinds_json,
-   0,1,NULL,'[]'
+   parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json
   FROM body_analysis_latest
   WHERE analysis_contract=? AND fatal_error=0
+   AND actionable_signal_kinds_json NOT LIKE '%"charcode_decode_call"%'
+   AND actionable_signal_kinds_json NOT LIKE '%"base64_decode_call"%'
+   AND actionable_signal_kinds_json NOT LIKE '%"radix_string_call"%'
    AND EXISTS(SELECT 1 FROM current_body c WHERE c.sha256=body_analysis_latest.sha256)
   """,(contract,pipe,PREVIOUS_ANALYSIS_CONTRACT))
  return db.total_changes-before

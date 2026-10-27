@@ -20,7 +20,7 @@ DEFAULT_CANDIDATES = DEFAULT_CORPUS / "preclass/candidates"
 DEFAULT_DEOB = JS_REDOX_ROOT / ".cargo-target-nodebug/debug/deobfuscate-safe"
 DEFAULT_STDIO = Path("/home/jan/projects/inference-redox/target/debug/inference-redox-stdio")
 REVIEW_CONTRACT = "js-zero-llm-review/v2"
-ANALYSIS_CONTRACT = "safe-deob+sus/v2"
+ANALYSIS_CONTRACT = "safe-deob+sus/v3"
 ALLOWED_CATEGORIES = frozenset({
     "hidden_string_decoder",
     "encoded_semantic_payload",

@@ -112,7 +112,7 @@ def main() -> None:
         for pipeline_id, observed_at, top_score, signal_count, cluster_count, transform_total in runs:
             connection.execute(
                 "INSERT INTO body_analysis_run(sha256,analysis_contract,pipeline_id,observed_at,input_path,output_sha256,output_bytes,deob_changed,deob_iterations,transform_total,transforms_json,deob_error,diagnostics,fatal_error,raw_signal_count,raw_cluster_count,raw_top_score,raw_signal_kinds_json,actionable_signal_count,actionable_cluster_count,actionable_top_score,actionable_signal_kinds_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (js_hash, "safe-deob+sus/v2", pipeline_id, observed_at, str(captures / "0001-popunder-ads-0123456789/resources/a.js"),
+                (js_hash, "safe-deob+sus/v3", pipeline_id, observed_at, str(captures / "0001-popunder-ads-0123456789/resources/a.js"),
                  js_hash, len(js), 1, 2, transform_total, "{}", None, 0, 0,
                  signal_count, cluster_count, top_score, "{}",
                  signal_count, cluster_count, top_score, "{}"),
