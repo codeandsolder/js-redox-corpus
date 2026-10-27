@@ -7,7 +7,7 @@ from pathlib import Path
 from corpus_env import CORPUS_ROOT, JS_REDOX_ROOT, REPO_ROOT
 ROOT=REPO_ROOT
 DEFAULT_CORPUS=CORPUS_ROOT; DEFAULT_DB=DEFAULT_CORPUS/'preclass/corpus.sqlite'; DEFAULT_CANDIDATES=DEFAULT_CORPUS/'preclass/candidates'
-DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v3'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v2'; SUS_CONTRACT='js-sus-scan/v5'
+DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v4'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v2'; SUS_CONTRACT='js-sus-scan/v6'
 POST_CANDIDATE_NAMES=('known-invalid','known-residual','known-weak-signals','known-zero','untested-interesting','quick-focus','regressed-from-best','llm-review-zero')
 def sha256_file(path):
  d=hashlib.sha256();
@@ -40,7 +40,7 @@ def ensure_schema(db):
 
 def migrate_previous_contract(db,contract,pipe):
  if contract!=ANALYSIS_CONTRACT:return 0
- # Contract migration is a one-time bootstrap. Once any v3 rows exist,
+ # Contract migration is a one-time bootstrap. Once any v4 rows exist,
  # subsequent engine/tool commits must create fresh analysis rows only for the
  # explicitly scheduled inputs rather than cloning the entire v1 ledger again.
  if db.execute('SELECT 1 FROM body_analysis_run WHERE analysis_contract=? LIMIT 1',(contract,)).fetchone(): return 0
@@ -63,6 +63,8 @@ def migrate_previous_contract(db,contract,pipe):
    AND actionable_signal_kinds_json NOT LIKE '%"charcode_decode_call"%'
    AND actionable_signal_kinds_json NOT LIKE '%"base64_decode_call"%'
    AND actionable_signal_kinds_json NOT LIKE '%"radix_string_call"%'
+   AND actionable_signal_kinds_json NOT LIKE '%"base64_blob"%'
+   AND actionable_signal_kinds_json NOT LIKE '%"opaque_blob"%'
    AND EXISTS(SELECT 1 FROM current_body c WHERE c.sha256=body_analysis_latest.sha256)
   """,(contract,pipe,PREVIOUS_ANALYSIS_CONTRACT))
  return db.total_changes-before
@@ -108,7 +110,7 @@ def write_row(db,row):
  db.execute(f"INSERT INTO body_analysis_run({columns}) VALUES({placeholders}) ON CONFLICT(sha256,analysis_contract,pipeline_id) DO UPDATE SET {updates}",tuple(row[k] for k in keys))
 
 def refresh_candidate_lists(db,directory):
- spec=importlib.util.spec_from_file_location('catalog_builder',ROOT/'scripts/build-corpus-catalog.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module.emit_candidates(db,directory,POST_CANDIDATE_NAMES)
+ spec=importlib.util.spec_from_file_location('catalog_builder',ROOT/'scripts/build-corpus-catalog.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module.emit_candidates(db,directory,POST_CANDIDATE_NAMES,progress_contract=ANALYSIS_CONTRACT)
 def main():
  ap=argparse.ArgumentParser(); ap.add_argument('--database',type=Path,default=DEFAULT_DB); ap.add_argument('--candidate-dir',type=Path,default=DEFAULT_CANDIDATES); src=ap.add_mutually_exclusive_group(); src.add_argument('--candidate',default='quick-focus'); src.add_argument('--paths-file',type=Path); ap.add_argument('--deobfuscate-safe',type=Path,default=DEFAULT_DEOB); ap.add_argument('--sus-scan',type=Path,default=DEFAULT_SUS); ap.add_argument('--analysis-contract',default=ANALYSIS_CONTRACT); ap.add_argument('--pipeline-id'); ap.add_argument('--force',action='store_true'); ap.add_argument('--skip-candidate-refresh',action='store_true'); ap.add_argument('--jobs',type=int,default=1); ap.add_argument('--deob-timeout-seconds',type=float,default=60.0); ap.add_argument('--limit',type=int,default=0); ap.add_argument('--nice',type=int,default=10); args=ap.parse_args()
  if args.jobs<1: raise SystemExit('--jobs must be >= 1')

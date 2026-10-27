@@ -35,7 +35,7 @@ def whatwg_windows_1252(raw: bytes) -> bytes:
     """Decode bytes using the WHATWG Windows-1252 index and emit UTF-8."""
     return raw.decode("latin1").translate(WINDOWS_1252_C1).encode("utf-8")
 
-PROGRESS_CONTRACT = "safe-deob+sus/v3"
+PROGRESS_CONTRACT = "safe-deob+sus/v2"
 SEMANTIC_CONTRACT = "js-sus-scan/v6"
 
 TRIVIAL_ANONYMOUS = {
@@ -775,6 +775,9 @@ def emit_candidates(
     db: sqlite3.Connection,
     directory: Path,
     names: tuple[str, ...] | None = None,
+    *,
+    progress_contract: str = PROGRESS_CONTRACT,
+    semantic_contract: str = SEMANTIC_CONTRACT,
 ) -> dict[str, int]:
     directory.mkdir(parents=True, exist_ok=True)
     selected_names = tuple(CANDIDATE_QUERIES) if names is None else names
@@ -803,8 +806,8 @@ def emit_candidates(
         db.executescript("\n".join([
             "DROP TABLE IF EXISTS temp._candidate_analysis_best;",
             "DROP TABLE IF EXISTS temp._candidate_analysis_latest;",
-            f"CREATE TEMP TABLE _candidate_analysis_best AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY fatal_error ASC, actionable_top_score ASC, actionable_signal_count ASC, actionable_cluster_count ASC, diagnostics ASC, transform_total DESC, observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{PROGRESS_CONTRACT}') WHERE _rank=1;",
-            f"CREATE TEMP TABLE _candidate_analysis_latest AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{PROGRESS_CONTRACT}') WHERE _rank=1;",
+            f"CREATE TEMP TABLE _candidate_analysis_best AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY fatal_error ASC, actionable_top_score ASC, actionable_signal_count ASC, actionable_cluster_count ASC, diagnostics ASC, transform_total DESC, observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{progress_contract}') WHERE _rank=1;",
+            f"CREATE TEMP TABLE _candidate_analysis_latest AS SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count FROM (SELECT sha256, analysis_contract, fatal_error, actionable_top_score, actionable_signal_count, ROW_NUMBER() OVER (PARTITION BY sha256 ORDER BY observed_at DESC, pipeline_id DESC) AS _rank FROM body_analysis_run WHERE analysis_contract='{progress_contract}') WHERE _rank=1;",
             "CREATE INDEX _candidate_best_sha_contract ON _candidate_analysis_best(sha256, analysis_contract);",
             "CREATE INDEX _candidate_latest_sha_contract ON _candidate_analysis_latest(sha256, analysis_contract);",
         ]))
@@ -812,6 +815,8 @@ def emit_candidates(
     counts = {}
     for name in selected_names:
         query = CANDIDATE_QUERIES[name]
+        query = query.replace(f"'{PROGRESS_CONTRACT}'", f"'{progress_contract}'")
+        query = query.replace(f"'{SEMANTIC_CONTRACT}'", f"'{semantic_contract}'")
         query = query.replace("current_body c", "_candidate_current_body c")
         if needs_analysis:
             query = query.replace("body_analysis_best", "_candidate_analysis_best")
