@@ -20,6 +20,7 @@ DEFAULT_CANDIDATES = DEFAULT_CORPUS / "preclass/candidates"
 DEFAULT_DEOB = JS_REDOX_ROOT / ".cargo-target-nodebug/debug/deobfuscate-safe"
 DEFAULT_STDIO = Path("/home/jan/projects/inference-redox/target/debug/inference-redox-stdio")
 REVIEW_CONTRACT = "js-zero-llm-review/v2"
+ANALYSIS_CONTRACT = "safe-deob+sus/v2"
 ALLOWED_CATEGORIES = frozenset({
     "hidden_string_decoder",
     "encoded_semantic_payload",
@@ -337,8 +338,8 @@ def review_source(client: StdioClient, source: str, expected_output_tokens: int)
 
 def latest_pipeline(db: sqlite3.Connection, digest: str) -> str:
     row = db.execute(
-        "SELECT pipeline_id FROM body_analysis_latest WHERE sha256=? AND analysis_contract='safe-deob+sus/v1'",
-        (digest,),
+        "SELECT pipeline_id FROM body_analysis_latest WHERE sha256=? AND analysis_contract=?",
+        (digest, ANALYSIS_CONTRACT),
     ).fetchone()
     if row is None:
         raise RuntimeError(f"no deterministic latest result for {digest}")

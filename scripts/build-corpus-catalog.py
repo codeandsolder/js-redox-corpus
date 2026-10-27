@@ -35,7 +35,7 @@ def whatwg_windows_1252(raw: bytes) -> bytes:
     """Decode bytes using the WHATWG Windows-1252 index and emit UTF-8."""
     return raw.decode("latin1").translate(WINDOWS_1252_C1).encode("utf-8")
 
-PROGRESS_CONTRACT = "safe-deob+sus/v1"
+PROGRESS_CONTRACT = "safe-deob+sus/v2"
 SEMANTIC_CONTRACT = "js-sus-scan/v4"
 
 TRIVIAL_ANONYMOUS = {
@@ -689,6 +689,8 @@ def open_database(path: Path) -> sqlite3.Connection:
           raw_signal_kinds_json TEXT NOT NULL, actionable_signal_count INTEGER NOT NULL,
           actionable_cluster_count INTEGER NOT NULL, actionable_top_score INTEGER NOT NULL,
           actionable_signal_kinds_json TEXT NOT NULL,
+          parser_fatal_error INTEGER NOT NULL DEFAULT 0, analysis_complete INTEGER NOT NULL DEFAULT 1,
+          parse_recovery TEXT, opaque_parse_spans_json TEXT NOT NULL DEFAULT '[]',
           PRIMARY KEY (sha256, analysis_contract, pipeline_id)
         );
         CREATE INDEX IF NOT EXISTS analysis_contract_idx ON body_analysis_run(analysis_contract, sha256);
@@ -730,6 +732,16 @@ def open_database(path: Path) -> sqlite3.Connection:
     for name, declaration in additions.items():
         if name not in semantic_columns:
             db.execute(f"ALTER TABLE body_semantic_scan ADD COLUMN {name} {declaration}")
+    analysis_columns = {row[1] for row in db.execute("PRAGMA table_info(body_analysis_run)")}
+    analysis_additions = {
+        "parser_fatal_error": "INTEGER NOT NULL DEFAULT 0",
+        "analysis_complete": "INTEGER NOT NULL DEFAULT 1",
+        "parse_recovery": "TEXT",
+        "opaque_parse_spans_json": "TEXT NOT NULL DEFAULT '[]'",
+    }
+    for name, declaration in analysis_additions.items():
+        if name not in analysis_columns:
+            db.execute(f"ALTER TABLE body_analysis_run ADD COLUMN {name} {declaration}")
     return db
 
 
