@@ -7,7 +7,7 @@ from pathlib import Path
 from corpus_env import CORPUS_ROOT, JS_REDOX_ROOT, REPO_ROOT
 ROOT=REPO_ROOT
 DEFAULT_CORPUS=CORPUS_ROOT; DEFAULT_DB=DEFAULT_CORPUS/'preclass/corpus.sqlite'; DEFAULT_CANDIDATES=DEFAULT_CORPUS/'preclass/candidates'
-DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v4'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v2'; SUS_CONTRACT='js-sus-scan/v6'
+DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v4'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v2'; SUS_CONTRACT='js-sus-scan/v7'
 POST_CANDIDATE_NAMES=('known-invalid','known-residual','known-weak-signals','known-zero','untested-interesting','quick-focus','regressed-from-best','llm-review-zero')
 def sha256_file(path):
  d=hashlib.sha256();
