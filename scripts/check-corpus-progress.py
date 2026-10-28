@@ -68,12 +68,14 @@ path=sys.argv[-1]; text=open(path,errors='replace').read(); fatal='INVALID_SENTI
   assert updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'current-pipeline')==0
   # If a previously excluded v4 row is later replaced by a healthy unaffected
   # result, a subsequent migration invocation must pick it up exactly once.
-  row=dict(base); row.update({'sha256':invalid_sha,'input_path':str(cap/invalid_body),'actionable_signal_kinds_json':'{}','actionable_signal_count':0,'raw_signal_kinds_json':'{}','raw_signal_count':0})
+  row=dict(base); row.update({'sha256':invalid_sha,'input_path':str(cap/invalid_body),'observed_at':'2026-01-02T00:00:00+00:00','actionable_signal_kinds_json':'{}','actionable_signal_count':0,'raw_signal_kinds_json':'{}','raw_signal_count':0})
   with dst: updater.write_row(dst,row)
   assert updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'current-pipeline')==1
   migrated_shas={r[0] for r in dst.execute('SELECT sha256 FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,))}
   assert migrated_shas=={sha,invalid_sha},migrated_shas
   assert updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'current-pipeline')==0
+  assert updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'future-pipeline')==0
+  assert dst.execute('SELECT COUNT(*) FROM body_analysis_run WHERE analysis_contract=? AND pipeline_id=?',(updater.ANALYSIS_CONTRACT,'future-pipeline')).fetchone()[0]==0
   dst.close()
   for label,overrides in [
    ('deob-timeout',{'deob_error':'timeout after 60s','deob_status':'timeout'}),

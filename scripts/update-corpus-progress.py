@@ -26,7 +26,16 @@ def ensure_schema(db):
  db.executescript("""
  CREATE TABLE IF NOT EXISTS body_analysis_run(sha256 TEXT NOT NULL,analysis_contract TEXT NOT NULL,pipeline_id TEXT NOT NULL,observed_at TEXT NOT NULL,input_path TEXT NOT NULL,output_sha256 TEXT,output_bytes INTEGER,deob_changed INTEGER NOT NULL,deob_iterations INTEGER,transform_total INTEGER NOT NULL,transforms_json TEXT NOT NULL,deob_error TEXT,diagnostics INTEGER NOT NULL,fatal_error INTEGER NOT NULL,raw_signal_count INTEGER NOT NULL,raw_cluster_count INTEGER NOT NULL,raw_top_score INTEGER NOT NULL,raw_signal_kinds_json TEXT NOT NULL,actionable_signal_count INTEGER NOT NULL,actionable_cluster_count INTEGER NOT NULL,actionable_top_score INTEGER NOT NULL,actionable_signal_kinds_json TEXT NOT NULL,PRIMARY KEY(sha256,analysis_contract,pipeline_id));
  CREATE INDEX IF NOT EXISTS analysis_contract_idx ON body_analysis_run(analysis_contract,sha256);
+ CREATE INDEX IF NOT EXISTS analysis_contract_observed_idx ON body_analysis_run(analysis_contract,observed_at DESC);
  CREATE INDEX IF NOT EXISTS analysis_residual_idx ON body_analysis_run(analysis_contract,fatal_error,actionable_top_score,actionable_signal_count);
+ CREATE TABLE IF NOT EXISTS analysis_migration_state(
+  analysis_contract TEXT PRIMARY KEY,
+  previous_contract TEXT NOT NULL,
+  pipeline_id TEXT NOT NULL,
+  source_rows INTEGER NOT NULL,
+  source_max_observed_at TEXT,
+  updated_at TEXT NOT NULL
+ );
  DROP VIEW IF EXISTS body_analysis_best;
  CREATE VIEW body_analysis_best AS SELECT * FROM (SELECT r.*,ROW_NUMBER() OVER(PARTITION BY sha256,analysis_contract ORDER BY fatal_error ASC,actionable_top_score ASC,actionable_signal_count ASC,actionable_cluster_count ASC,diagnostics ASC,transform_total DESC,observed_at DESC,pipeline_id DESC) AS _rank FROM body_analysis_run r) WHERE _rank=1;
  DROP VIEW IF EXISTS body_analysis_latest;
@@ -64,8 +73,16 @@ def ensure_schema(db):
 def migrate_previous_contract(db,contract,pipe):
  if contract!=ANALYSIS_CONTRACT:return 0
  # v5 changes only scanner actionability for statically exposed dynamic code.
- # Migration is deliberately incremental: v4 may still be filling while v5 is
- # used, so each invocation carries forward any newly available healthy rows.
+ # Migration is incremental for the bootstrap pipeline only. A later engine
+ # pipeline must earn fresh results rather than inheriting a historical v4 run.
+ state=db.execute(
+  'SELECT previous_contract,pipeline_id,source_rows,source_max_observed_at FROM analysis_migration_state WHERE analysis_contract=?',
+  (contract,),
+ ).fetchone()
+ if state is not None and (state[0]!=PREVIOUS_ANALYSIS_CONTRACT or state[1]!=pipe): return 0
+ source_rows=db.execute('SELECT COUNT(*) FROM body_analysis_run WHERE analysis_contract=?',(PREVIOUS_ANALYSIS_CONTRACT,)).fetchone()[0]
+ source_max=db.execute('SELECT MAX(observed_at) FROM body_analysis_run WHERE analysis_contract=?',(PREVIOUS_ANALYSIS_CONTRACT,)).fetchone()[0]
+ if state is not None and state[2]==source_rows and state[3]==source_max: return 0
  before=db.total_changes
  with db:
   db.execute("""
@@ -80,8 +97,14 @@ def migrate_previous_contract(db,contract,pipe):
    raw_signal_count,raw_cluster_count,raw_top_score,raw_signal_kinds_json,actionable_signal_count,
    actionable_cluster_count,actionable_top_score,actionable_signal_kinds_json,
    parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json,deob_status,deob_refusal_reason
-  FROM body_analysis_latest
-  WHERE analysis_contract=? AND fatal_error=0
+  FROM (
+   SELECT r.*,ROW_NUMBER() OVER(
+    PARTITION BY sha256 ORDER BY observed_at DESC,pipeline_id DESC
+   ) AS _rank
+   FROM body_analysis_run r
+   WHERE analysis_contract=?
+  ) previous
+  WHERE _rank=1 AND fatal_error=0
    AND deob_status IN ('ok','refused')
    AND parser_fatal_error=0
    AND analysis_complete!=0
@@ -90,9 +113,23 @@ def migrate_previous_contract(db,contract,pipe):
    AND raw_signal_kinds_json NOT LIKE '%"dynamic_code_call"%'
    AND raw_signal_kinds_json NOT LIKE '%"dynamic_code_constructor"%'
    AND raw_signal_kinds_json NOT LIKE '%"string_timer_call"%'
-   AND EXISTS(SELECT 1 FROM current_body c WHERE c.sha256=body_analysis_latest.sha256)
-  """,(contract,pipe,PREVIOUS_ANALYSIS_CONTRACT))
- return db.total_changes-before
+   AND EXISTS(SELECT 1 FROM current_body c WHERE c.sha256=previous.sha256)
+   AND NOT EXISTS(
+    SELECT 1 FROM body_analysis_run dst
+    WHERE dst.sha256=previous.sha256 AND dst.analysis_contract=? AND dst.pipeline_id=?
+   )
+  """,(contract,pipe,PREVIOUS_ANALYSIS_CONTRACT,contract,pipe))
+  db.execute("""
+  INSERT INTO analysis_migration_state(analysis_contract,previous_contract,pipeline_id,source_rows,source_max_observed_at,updated_at)
+  VALUES(?,?,?,?,?,?)
+  ON CONFLICT(analysis_contract) DO UPDATE SET
+   previous_contract=excluded.previous_contract,
+   pipeline_id=excluded.pipeline_id,
+   source_rows=excluded.source_rows,
+   source_max_observed_at=excluded.source_max_observed_at,
+   updated_at=excluded.updated_at
+  """,(contract,PREVIOUS_ANALYSIS_CONTRACT,pipe,source_rows,source_max,utc_now()))
+ return db.total_changes-before-1
 def git_revision(repo):
  head=subprocess.run(['git','-C',str(repo),'rev-parse','HEAD'],text=True,capture_output=True,check=True).stdout.strip()
  dirty=subprocess.run(['git','-C',str(repo),'status','--porcelain','--untracked-files=all'],text=True,capture_output=True,check=True).stdout.strip()
