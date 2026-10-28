@@ -9,6 +9,13 @@ ROOT=REPO_ROOT
 DEFAULT_CORPUS=CORPUS_ROOT; DEFAULT_DB=DEFAULT_CORPUS/'preclass/corpus.sqlite'; DEFAULT_CANDIDATES=DEFAULT_CORPUS/'preclass/candidates'
 DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v5'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v4'; SUS_CONTRACT='js-sus-scan/v8'
 POST_CANDIDATE_NAMES=('known-invalid','known-residual','known-weak-signals','known-zero','untested-interesting','quick-focus','regressed-from-best','llm-review-zero')
+DEOB_REFUSAL_PREFIX='Error: source rejected by safe deobfuscation: '
+def classify_deob_failure(message):
+ if message.startswith('timeout after '): return ('timeout',None)
+ if message.startswith(DEOB_REFUSAL_PREFIX):
+  reason=message[len(DEOB_REFUSAL_PREFIX):].strip()
+  return ('refused',reason or None)
+ return ('error',None)
 def sha256_file(path):
  d=hashlib.sha256();
  with path.open('rb') as h:
@@ -26,9 +33,25 @@ def ensure_schema(db):
  CREATE VIEW body_analysis_latest AS SELECT * FROM (SELECT r.*,ROW_NUMBER() OVER(PARTITION BY sha256,analysis_contract ORDER BY observed_at DESC,pipeline_id DESC) AS _rank FROM body_analysis_run r) WHERE _rank=1;
  """)
  columns={r[1] for r in db.execute('PRAGMA table_info(body_analysis_run)')}
- additions={'parser_fatal_error':'INTEGER NOT NULL DEFAULT 0','analysis_complete':'INTEGER NOT NULL DEFAULT 1','parse_recovery':'TEXT','opaque_parse_spans_json':"TEXT NOT NULL DEFAULT '[]'"}
+ additions={'parser_fatal_error':'INTEGER NOT NULL DEFAULT 0','analysis_complete':'INTEGER NOT NULL DEFAULT 1','parse_recovery':'TEXT','opaque_parse_spans_json':"TEXT NOT NULL DEFAULT '[]'",'deob_status':"TEXT NOT NULL DEFAULT 'unknown'",'deob_refusal_reason':'TEXT'}
  for name,declaration in additions.items():
   if name not in columns: db.execute(f'ALTER TABLE body_analysis_run ADD COLUMN {name} {declaration}')
+ prefix=DEOB_REFUSAL_PREFIX
+ db.execute("""
+ UPDATE body_analysis_run
+ SET deob_status=CASE
+   WHEN deob_error IS NULL THEN 'ok'
+   WHEN deob_error LIKE 'timeout after %' THEN 'timeout'
+   WHEN deob_error LIKE ? THEN 'refused'
+   ELSE 'error'
+ END
+ WHERE deob_status='unknown'
+ """,(prefix+'%',))
+ db.execute("""
+ UPDATE body_analysis_run
+ SET deob_refusal_reason=trim(substr(deob_error,?))
+ WHERE deob_status='refused' AND deob_refusal_reason IS NULL AND deob_error LIKE ?
+ """,(len(prefix)+1,prefix+'%'))
  # Views created before ALTER expand SELECT * at query time in SQLite, but
  # recreate them so their stored SQL/provenance matches the current schema.
  db.executescript("""
@@ -51,15 +74,15 @@ def migrate_previous_contract(db,contract,pipe):
    deob_changed,deob_iterations,transform_total,transforms_json,deob_error,diagnostics,fatal_error,
    raw_signal_count,raw_cluster_count,raw_top_score,raw_signal_kinds_json,actionable_signal_count,
    actionable_cluster_count,actionable_top_score,actionable_signal_kinds_json,
-   parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json)
+   parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json,deob_status,deob_refusal_reason)
   SELECT sha256,?, ?,observed_at,input_path,output_sha256,output_bytes,
    deob_changed,deob_iterations,transform_total,transforms_json,deob_error,diagnostics,fatal_error,
    raw_signal_count,raw_cluster_count,raw_top_score,raw_signal_kinds_json,actionable_signal_count,
    actionable_cluster_count,actionable_top_score,actionable_signal_kinds_json,
-   parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json
+   parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json,deob_status,deob_refusal_reason
   FROM body_analysis_latest
   WHERE analysis_contract=? AND fatal_error=0
-   AND deob_error IS NULL
+   AND deob_status IN ('ok','refused')
    AND parser_fatal_error=0
    AND analysis_complete!=0
    -- v8 reclassifies statically exposed dynamic source as raw-only evidence.
@@ -93,20 +116,21 @@ def analyze_one(path,deob,sus,contract,pipeline,deob_timeout):
  input_sha=sha256_file(path)
  with tempfile.TemporaryDirectory(prefix='js-redox-progress-') as tmp:
   work=Path(tmp); output=work/f'{input_sha}.js'; report_path=work/'deob.json'
-  deob_error=None; deob_report=None
+  deob_error=None; deob_report=None; deob_status='ok'; deob_refusal_reason=None
   try:
    cp=subprocess.run([str(deob),str(path),str(output),'--report',str(report_path)],text=True,capture_output=True,timeout=deob_timeout)
   except subprocess.TimeoutExpired:
-   cp=None; deob_error=f'timeout after {deob_timeout:g}s'; scan_path=path
+   cp=None; deob_error=f'timeout after {deob_timeout:g}s'; deob_status='timeout'; scan_path=path
   if cp is not None:
    if cp.returncode==0 and report_path.is_file() and output.is_file(): deob_report=json.loads(report_path.read_text()); scan_path=output
-   else: deob_error=(cp.stderr or cp.stdout or f'exit {cp.returncode}').strip()[:4000]; scan_path=path
+   else:
+    deob_error=(cp.stderr or cp.stdout or f'exit {cp.returncode}').strip()[:4000]; deob_status,deob_refusal_reason=classify_deob_failure(deob_error); scan_path=path
   sp=subprocess.run([str(sus),'--json',str(scan_path)],text=True,capture_output=True)
   if sp.returncode!=0: raise RuntimeError(f'sus-scan failed for {path}: {(sp.stderr or sp.stdout).strip()}')
   sf=parse_sus(sp.stdout); transforms=dict((deob_report or {}).get('transforms') or {})
-  return {'sha256':input_sha,'analysis_contract':contract,'pipeline_id':pipeline,'observed_at':utc_now(),'input_path':str(path),'output_sha256':(deob_report or {}).get('output_sha256') or input_sha,'output_bytes':scan_path.stat().st_size,'deob_changed':int(bool((deob_report or {}).get('changed'))),'deob_iterations':(deob_report or {}).get('iterations'),'transform_total':sum(int(v) for v in transforms.values()),'transforms_json':json.dumps(transforms,sort_keys=True,separators=(',',':')),'deob_error':deob_error,'diagnostics':int(sf.get('diagnostics') or 0),'parser_fatal_error':int(bool(sf.get('parser_fatal_error'))),'fatal_error':int(bool(sf.get('fatal_error'))),'analysis_complete':int(sf.get('analysis_complete',True) is not False),'parse_recovery':sf.get('parse_recovery'),'opaque_parse_spans_json':json.dumps(sf.get('opaque_parse_spans') or [],sort_keys=True,separators=(',',':')),'raw_signal_count':int(sf.get('signal_count') or 0),'raw_cluster_count':len(sf.get('clusters') or []),'raw_top_score':int(sf.get('top_score') or 0),'raw_signal_kinds_json':json.dumps(sf.get('signal_kinds') or {},sort_keys=True,separators=(',',':')),'actionable_signal_count':int(sf.get('actionable_signal_count') or 0),'actionable_cluster_count':len(sf.get('actionable_clusters') or []),'actionable_top_score':int(sf.get('actionable_top_score') or 0),'actionable_signal_kinds_json':json.dumps(sf.get('actionable_signal_kinds') or {},sort_keys=True,separators=(',',':'))}
+  return {'sha256':input_sha,'analysis_contract':contract,'pipeline_id':pipeline,'observed_at':utc_now(),'input_path':str(path),'output_sha256':(deob_report or {}).get('output_sha256') or input_sha,'output_bytes':scan_path.stat().st_size,'deob_changed':int(bool((deob_report or {}).get('changed'))),'deob_iterations':(deob_report or {}).get('iterations'),'transform_total':sum(int(v) for v in transforms.values()),'transforms_json':json.dumps(transforms,sort_keys=True,separators=(',',':')),'deob_error':deob_error,'deob_status':deob_status,'deob_refusal_reason':deob_refusal_reason,'diagnostics':int(sf.get('diagnostics') or 0),'parser_fatal_error':int(bool(sf.get('parser_fatal_error'))),'fatal_error':int(bool(sf.get('fatal_error'))),'analysis_complete':int(sf.get('analysis_complete',True) is not False),'parse_recovery':sf.get('parse_recovery'),'opaque_parse_spans_json':json.dumps(sf.get('opaque_parse_spans') or [],sort_keys=True,separators=(',',':')),'raw_signal_count':int(sf.get('signal_count') or 0),'raw_cluster_count':len(sf.get('clusters') or []),'raw_top_score':int(sf.get('top_score') or 0),'raw_signal_kinds_json':json.dumps(sf.get('signal_kinds') or {},sort_keys=True,separators=(',',':')),'actionable_signal_count':int(sf.get('actionable_signal_count') or 0),'actionable_cluster_count':len(sf.get('actionable_clusters') or []),'actionable_top_score':int(sf.get('actionable_top_score') or 0),'actionable_signal_kinds_json':json.dumps(sf.get('actionable_signal_kinds') or {},sort_keys=True,separators=(',',':'))}
 def write_row(db,row):
- keys=('sha256','analysis_contract','pipeline_id','observed_at','input_path','output_sha256','output_bytes','deob_changed','deob_iterations','transform_total','transforms_json','deob_error','diagnostics','fatal_error','raw_signal_count','raw_cluster_count','raw_top_score','raw_signal_kinds_json','actionable_signal_count','actionable_cluster_count','actionable_top_score','actionable_signal_kinds_json','parser_fatal_error','analysis_complete','parse_recovery','opaque_parse_spans_json')
+ keys=('sha256','analysis_contract','pipeline_id','observed_at','input_path','output_sha256','output_bytes','deob_changed','deob_iterations','transform_total','transforms_json','deob_error','diagnostics','fatal_error','raw_signal_count','raw_cluster_count','raw_top_score','raw_signal_kinds_json','actionable_signal_count','actionable_cluster_count','actionable_top_score','actionable_signal_kinds_json','parser_fatal_error','analysis_complete','parse_recovery','opaque_parse_spans_json','deob_status','deob_refusal_reason')
  columns=','.join(keys); placeholders=','.join('?' for _ in keys)
  updates=','.join(f'{k}=excluded.{k}' for k in keys if k not in ('sha256','analysis_contract','pipeline_id'))
  db.execute(f"INSERT INTO body_analysis_run({columns}) VALUES({placeholders}) ON CONFLICT(sha256,analysis_contract,pipeline_id) DO UPDATE SET {updates}",tuple(row[k] for k in keys))
@@ -135,6 +159,7 @@ def main():
     if done%25==0: print(f'progress {done}/{len(paths)}',flush=True)
    except Exception as exc: errors.append({'path':str(p),'error':repr(exc)})
  counts={} if args.skip_candidate_refresh else refresh_candidate_lists(db,args.candidate_dir); query='SELECT COUNT(*),SUM(fatal_error=0 AND actionable_top_score=0 AND actionable_signal_count=0),SUM(fatal_error=0 AND actionable_top_score=0 AND actionable_signal_count>0),SUM(fatal_error=0 AND actionable_top_score>0),SUM(fatal_error!=0) FROM {} WHERE analysis_contract=?'; best=db.execute(query.format('body_analysis_best'),(args.analysis_contract,)).fetchone(); latest=db.execute(query.format('body_analysis_latest'),(args.analysis_contract,)).fetchone()
- report={'schema':'js-redox-corpus-progress/v1','analysis_contract':args.analysis_contract,'pipeline_id':pipe,'migrated_from_previous':migrated,'requested':requested,'scheduled':len(paths),'skipped_existing':skipped_existing,'recorded':done,'errors':errors,'best_known':{'total':int(best[0] or 0),'zero_signals':int(best[1] or 0),'weak_signals':int(best[2] or 0),'residual':int(best[3] or 0),'invalid':int(best[4] or 0)},'latest':{'total':int(latest[0] or 0),'zero_signals':int(latest[1] or 0),'weak_signals':int(latest[2] or 0),'residual':int(latest[3] or 0),'invalid':int(latest[4] or 0)},'candidates':{n:counts[n] for n in ('known-invalid','known-residual','known-weak-signals','known-zero','untested-interesting','quick-focus','regressed-from-best','llm-review-zero') if n in counts}}; print(json.dumps(report,indent=2)); db.close()
+ deob_status_counts={row[0]:int(row[1]) for row in db.execute('SELECT deob_status,COUNT(*) FROM body_analysis_latest WHERE analysis_contract=? GROUP BY deob_status',(args.analysis_contract,))}
+ report={'schema':'js-redox-corpus-progress/v1','analysis_contract':args.analysis_contract,'pipeline_id':pipe,'migrated_from_previous':migrated,'requested':requested,'scheduled':len(paths),'skipped_existing':skipped_existing,'recorded':done,'errors':errors,'best_known':{'total':int(best[0] or 0),'zero_signals':int(best[1] or 0),'weak_signals':int(best[2] or 0),'residual':int(best[3] or 0),'invalid':int(best[4] or 0)},'latest':{'total':int(latest[0] or 0),'zero_signals':int(latest[1] or 0),'weak_signals':int(latest[2] or 0),'residual':int(latest[3] or 0),'invalid':int(latest[4] or 0)},'deob_status':deob_status_counts,'candidates':{n:counts[n] for n in ('known-invalid','known-residual','known-weak-signals','known-zero','untested-interesting','quick-focus','regressed-from-best','llm-review-zero') if n in counts}}; print(json.dumps(report,indent=2)); db.close()
  if errors: raise SystemExit(1)
 if __name__=='__main__': main()
