@@ -232,11 +232,15 @@ def main() -> None:
                 SELECT 1 FROM body_semantic_scan ss
                 WHERE ss.sha256=c.sha256 AND ss.scan_contract=?
               )
-            ORDER BY c.sha256
             """,
             (SEMANTIC_CONTRACT,),
         )
     )
+    # The indexed content-kind query is cheap, but asking SQLite to ORDER BY
+    # current_body.sha256 forces a large temporary B-tree because the planner
+    # sensibly starts from body_scan's selective index. We materialize the rows
+    # here anyway, so sort in memory and preserve the same deterministic order.
+    all_pending.sort(key=lambda row: row[0])
     pending = all_pending[:args.limit] if args.limit else all_pending
     print(f"semantic pending={len(pending)} contract={SEMANTIC_CONTRACT}", flush=True)
     done = 0
