@@ -50,13 +50,13 @@ path=sys.argv[-1]; text=open(path,errors='replace').read(); fatal='INVALID_SENTI
   migrated_raw={r[0] for r in raw_db.execute("SELECT sha256 FROM body_semantic_scan WHERE scan_contract='js-sus-scan/v8'")}
   assert migrated_raw=={sha},migrated_raw
   raw_db.close()
-  # v2 -> v4 bootstrapping may only clone rows whose result is unaffected by
-  # newer scanner semantics / proof-gated transforms. Affected rows must run.
+  # v4 -> v5 migration is incremental and may only clone healthy rows whose
+  # raw post-deob signals are unaffected by the v8 dynamic-code policy.
   migration_db=w/'migration.sqlite'; src=sqlite3.connect(db); dst=sqlite3.connect(migration_db); src.backup(dst); src.close()
   spec=importlib.util.spec_from_file_location('progress_updater',UPDATER); updater=importlib.util.module_from_spec(spec); spec.loader.exec_module(updater)
   updater.ensure_schema(dst)
-  base={'analysis_contract':updater.PREVIOUS_ANALYSIS_CONTRACT,'pipeline_id':'old-pipeline','observed_at':'2026-01-01T00:00:00+00:00','output_sha256':None,'output_bytes':1,'deob_changed':0,'deob_iterations':1,'transform_total':0,'transforms_json':'{}','deob_error':None,'diagnostics':0,'fatal_error':0,'raw_signal_count':1,'raw_cluster_count':1,'raw_top_score':10,'raw_signal_kinds_json':'{}','actionable_signal_count':1,'actionable_cluster_count':1,'actionable_top_score':10,'parser_fatal_error':0,'analysis_complete':1,'parse_recovery':None,'opaque_parse_spans_json':'[]'}
-  cases=[(sha,cap/body,{}),(invalid_sha,cap/invalid_body,{'direct_table_decoder':1}),(weak_sha,cap/weak_body,{'array_rotation':2,'rotation_checksum_iife':1})]
+  base={'analysis_contract':updater.PREVIOUS_ANALYSIS_CONTRACT,'pipeline_id':'old-pipeline','observed_at':'2026-01-01T00:00:00+00:00','output_sha256':None,'output_bytes':1,'deob_changed':0,'deob_iterations':1,'transform_total':0,'transforms_json':'{}','deob_error':None,'deob_status':'ok','deob_refusal_reason':None,'diagnostics':0,'fatal_error':0,'raw_signal_count':1,'raw_cluster_count':1,'raw_top_score':10,'raw_signal_kinds_json':'{}','actionable_signal_count':1,'actionable_cluster_count':1,'actionable_top_score':10,'parser_fatal_error':0,'analysis_complete':1,'parse_recovery':None,'opaque_parse_spans_json':'[]'}
+  cases=[(sha,cap/body,{}),(invalid_sha,cap/invalid_body,{'dynamic_code_call':1}),(weak_sha,cap/weak_body,{'dynamic_code_constructor':2,'string_timer_call':1})]
   with dst:
    for case_sha,case_path,kinds in cases:
     row=dict(base); row.update({'sha256':case_sha,'input_path':str(case_path),'actionable_signal_kinds_json':json.dumps(kinds,separators=(',',':')),'actionable_signal_count':sum(kinds.values()),'raw_signal_kinds_json':json.dumps(kinds,separators=(',',':')),'raw_signal_count':sum(kinds.values())})
@@ -65,10 +65,20 @@ path=sys.argv[-1]; text=open(path,errors='replace').read(); fatal='INVALID_SENTI
   assert migrated==1,migrated
   migrated_shas={r[0] for r in dst.execute('SELECT sha256 FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,))}
   assert migrated_shas=={sha},migrated_shas
+  assert updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'current-pipeline')==0
+  # If a previously excluded v4 row is later replaced by a healthy unaffected
+  # result, a subsequent migration invocation must pick it up exactly once.
+  row=dict(base); row.update({'sha256':invalid_sha,'input_path':str(cap/invalid_body),'actionable_signal_kinds_json':'{}','actionable_signal_count':0,'raw_signal_kinds_json':'{}','raw_signal_count':0})
+  with dst: updater.write_row(dst,row)
+  assert updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'current-pipeline')==1
+  migrated_shas={r[0] for r in dst.execute('SELECT sha256 FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,))}
+  assert migrated_shas=={sha,invalid_sha},migrated_shas
+  assert updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'current-pipeline')==0
   dst.close()
   for label,overrides in [
-   ('deob-error',{'deob_error':'timeout'}),
-   ('parser-incomplete',{'parser_fatal_error':1,'analysis_complete':0,'parse_recovery':'browser-legacy-call-assignment'}),
+   ('deob-timeout',{'deob_error':'timeout after 60s','deob_status':'timeout'}),
+   ('deob-error',{'deob_error':'some tool failure','deob_status':'error'}),
+   ('parser-incomplete',{'deob_error':'Error: source rejected by safe deobfuscation: parse-failure','deob_status':'refused','deob_refusal_reason':'parse-failure','parser_fatal_error':1,'analysis_complete':0,'parse_recovery':'browser-legacy-call-assignment'}),
   ]:
    bad_db=w/f'migration-{label}.sqlite'; src=sqlite3.connect(db); bad=sqlite3.connect(bad_db); src.backup(bad); src.close(); updater.ensure_schema(bad)
    row=dict(base); row.update({'sha256':sha,'input_path':str(cap/body),'actionable_signal_kinds_json':'{}','actionable_signal_count':0,'raw_signal_kinds_json':'{}','raw_signal_count':0}); row.update(overrides)
@@ -76,21 +86,31 @@ path=sys.argv[-1]; text=open(path,errors='replace').read(); fatal='INVALID_SENTI
    assert updater.migrate_previous_contract(bad,updater.ANALYSIS_CONTRACT,'current-pipeline')==0,label
    assert bad.execute('SELECT COUNT(*) FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,)).fetchone()[0]==0,label
    bad.close()
+  assert updater.classify_deob_failure('timeout after 60s')==('timeout',None)
+  assert updater.classify_deob_failure('Error: source rejected by safe deobfuscation: dynamic-with-scope')==('refused','dynamic-with-scope')
+  assert updater.classify_deob_failure('other failure')==('error',None)
+  refusal_db=w/'migration-refusal.sqlite'; src=sqlite3.connect(db); refusal=sqlite3.connect(refusal_db); src.backup(refusal); src.close(); updater.ensure_schema(refusal)
+  row=dict(base); row.update({'sha256':sha,'input_path':str(cap/body),'deob_error':'Error: source rejected by safe deobfuscation: dynamic-with-scope','deob_status':'refused','deob_refusal_reason':'dynamic-with-scope','actionable_signal_kinds_json':'{}','actionable_signal_count':0,'raw_signal_kinds_json':'{}','raw_signal_count':0})
+  with refusal: updater.write_row(refusal,row)
+  assert updater.migrate_previous_contract(refusal,updater.ANALYSIS_CONTRACT,'current-pipeline')==1
+  migrated=refusal.execute('SELECT deob_status,deob_refusal_reason FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,)).fetchone()
+  assert migrated==('refused','dynamic-with-scope'),migrated
+  refusal.close()
   paths=w/'paths.txt'; paths.write_text(str(cap/body)+'\n')
   invalid_paths=w/'invalid-paths.txt'; invalid_paths.write_text(str(cap/invalid_body)+'\n')
   weak_paths=w/'weak-paths.txt'; weak_paths.write_text(str(cap/weak_body)+'\n')
-  cp=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
-  report=json.loads(cp.stdout); assert report['recorded']==1,report; assert report['scheduled']==1,report; assert report['skipped_existing']==0,report; assert report['best_known']['residual']==1,report
-  cp2=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
+  cp=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus_v8),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
+  report=json.loads(cp.stdout); assert report['recorded']==1,report; assert report['scheduled']==1,report; assert report['deob_status'].get('ok')==1,report; assert report['skipped_existing']==0,report; assert report['best_known']['residual']==1,report
+  cp2=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus_v8),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
   report2=json.loads(cp2.stdout); assert report2['requested']==1,report2; assert report2['scheduled']==0,report2; assert report2['skipped_existing']==1,report2; assert report2['recorded']==0,report2
-  invalid_cp=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(invalid_paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
+  invalid_cp=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(invalid_paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus_v8),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
   invalid_report=json.loads(invalid_cp.stdout); assert invalid_report['recorded']==1,invalid_report; assert invalid_report['best_known']['invalid']==1,invalid_report; assert invalid_report['best_known']['residual']==1,invalid_report
-  weak_cp=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(weak_paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
+  weak_cp=subprocess.run([sys.executable,str(UPDATER),'--database',str(db),'--candidate-dir',str(cand),'--paths-file',str(weak_paths),'--deobfuscate-safe',str(deob),'--sus-scan',str(sus_v8),'--pipeline-id','test-p1','--nice','0'],check=True,text=True,capture_output=True)
   weak_report=json.loads(weak_cp.stdout); assert weak_report['recorded']==1,weak_report; assert weak_report['best_known']['weak_signals']==1,weak_report; assert weak_report['best_known']['residual']==1,weak_report; assert weak_report['best_known']['invalid']==1,weak_report
   con=sqlite3.connect(db); row=con.execute('SELECT actionable_top_score,actionable_signal_count,transform_total FROM body_analysis_best WHERE sha256=?',(sha,)).fetchone(); assert row==(15,3,3),row; con.close()
   assert (cand/'known-invalid.txt').read_text().strip()==str(cap/invalid_body)
   assert (cand/'known-weak-signals.txt').read_text().strip()==str(cap/weak_body)
   assert (cand/'known-residual.txt').read_text().strip()==str(cap/body); assert (cand/'quick-focus.txt').read_text().strip()==str(cap/body)
-  sample=subprocess.run([sys.executable,str(SAMPLER),'--database',str(db),'--sus-scan',str(sus),'--sample-per-stratum','1'],check=True,text=True,capture_output=True); sampled=json.loads(sample.stdout); assert sampled['schema']=='js-redox-corpus-classifier-sample/v2',sampled
+  sample=subprocess.run([sys.executable,str(SAMPLER),'--database',str(db),'--sus-scan',str(sus_v8),'--sample-per-stratum','1'],check=True,text=True,capture_output=True); sampled=json.loads(sample.stdout); assert sampled['schema']=='js-redox-corpus-classifier-sample/v2',sampled
   print('PASS: corpus progress records post-deob semantic residuals and refreshes focus candidates')
 if __name__=='__main__': main()
