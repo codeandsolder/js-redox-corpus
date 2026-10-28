@@ -60,6 +60,9 @@ def migrate_previous_contract(db,contract,pipe):
    parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json
   FROM body_analysis_latest
   WHERE analysis_contract=? AND fatal_error=0
+   AND deob_error IS NULL
+   AND parser_fatal_error=0
+   AND analysis_complete!=0
    -- Re-run rows touched by scanner semantics or proof-gated transforms
    -- added since the v2 baseline. Copying these would falsely attribute an
    -- old post-deob result to the current engine pipeline.

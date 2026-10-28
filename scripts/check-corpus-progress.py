@@ -49,6 +49,16 @@ path=sys.argv[-1]; text=open(path,errors='replace').read(); fatal='INVALID_SENTI
   migrated_shas={r[0] for r in dst.execute('SELECT sha256 FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,))}
   assert migrated_shas=={sha},migrated_shas
   dst.close()
+  for label,overrides in [
+   ('deob-error',{'deob_error':'timeout'}),
+   ('parser-incomplete',{'parser_fatal_error':1,'analysis_complete':0,'parse_recovery':'browser-legacy-call-assignment'}),
+  ]:
+   bad_db=w/f'migration-{label}.sqlite'; src=sqlite3.connect(db); bad=sqlite3.connect(bad_db); src.backup(bad); src.close(); updater.ensure_schema(bad)
+   row=dict(base); row.update({'sha256':sha,'input_path':str(cap/body),'actionable_signal_kinds_json':'{}','actionable_signal_count':0,'raw_signal_kinds_json':'{}','raw_signal_count':0}); row.update(overrides)
+   with bad: updater.write_row(bad,row)
+   assert updater.migrate_previous_contract(bad,updater.ANALYSIS_CONTRACT,'current-pipeline')==0,label
+   assert bad.execute('SELECT COUNT(*) FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,)).fetchone()[0]==0,label
+   bad.close()
   paths=w/'paths.txt'; paths.write_text(str(cap/body)+'\n')
   invalid_paths=w/'invalid-paths.txt'; invalid_paths.write_text(str(cap/invalid_body)+'\n')
   weak_paths=w/'weak-paths.txt'; weak_paths.write_text(str(cap/weak_body)+'\n')
