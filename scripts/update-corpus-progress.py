@@ -7,7 +7,7 @@ from pathlib import Path
 from corpus_env import CORPUS_ROOT, JS_REDOX_ROOT, REPO_ROOT
 ROOT=REPO_ROOT
 DEFAULT_CORPUS=CORPUS_ROOT; DEFAULT_DB=DEFAULT_CORPUS/'preclass/corpus.sqlite'; DEFAULT_CANDIDATES=DEFAULT_CORPUS/'preclass/candidates'
-DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v4'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v2'; SUS_CONTRACT='js-sus-scan/v7'
+DEFAULT_DEOB=JS_REDOX_ROOT/'.cargo-target-nodebug/release/deobfuscate-safe'; DEFAULT_SUS=JS_REDOX_ROOT/'.cargo-target-nodebug/release/sus-scan'; ANALYSIS_CONTRACT='safe-deob+sus/v5'; PREVIOUS_ANALYSIS_CONTRACT='safe-deob+sus/v4'; SUS_CONTRACT='js-sus-scan/v8'
 POST_CANDIDATE_NAMES=('known-invalid','known-residual','known-weak-signals','known-zero','untested-interesting','quick-focus','regressed-from-best','llm-review-zero')
 def sha256_file(path):
  d=hashlib.sha256();
@@ -40,10 +40,9 @@ def ensure_schema(db):
 
 def migrate_previous_contract(db,contract,pipe):
  if contract!=ANALYSIS_CONTRACT:return 0
- # Contract migration is a one-time bootstrap. Once any v4 rows exist,
- # subsequent engine/tool commits must create fresh analysis rows only for the
- # explicitly scheduled inputs rather than cloning the entire v1 ledger again.
- if db.execute('SELECT 1 FROM body_analysis_run WHERE analysis_contract=? LIMIT 1',(contract,)).fetchone(): return 0
+ # v5 changes only scanner actionability for statically exposed dynamic code.
+ # Migration is deliberately incremental: v4 may still be filling while v5 is
+ # used, so each invocation carries forward any newly available healthy rows.
  before=db.total_changes
  with db:
   db.execute("""
@@ -63,17 +62,11 @@ def migrate_previous_contract(db,contract,pipe):
    AND deob_error IS NULL
    AND parser_fatal_error=0
    AND analysis_complete!=0
-   -- Re-run rows touched by scanner semantics or proof-gated transforms
-   -- added since the v2 baseline. Copying these would falsely attribute an
-   -- old post-deob result to the current engine pipeline.
-   AND actionable_signal_kinds_json NOT LIKE '%"charcode_decode_call"%'
-   AND actionable_signal_kinds_json NOT LIKE '%"base64_decode_call"%'
-   AND actionable_signal_kinds_json NOT LIKE '%"radix_string_call"%'
-   AND actionable_signal_kinds_json NOT LIKE '%"base64_blob"%'
-   AND actionable_signal_kinds_json NOT LIKE '%"opaque_blob"%'
-   AND actionable_signal_kinds_json NOT LIKE '%"direct_table_decoder"%'
-   AND actionable_signal_kinds_json NOT LIKE '%"array_rotation"%'
-   AND actionable_signal_kinds_json NOT LIKE '%"rotation_checksum_iife"%'
+   -- v8 reclassifies statically exposed dynamic source as raw-only evidence.
+   -- Any v4 row containing the old raw kinds must be rescanned under v8.
+   AND raw_signal_kinds_json NOT LIKE '%"dynamic_code_call"%'
+   AND raw_signal_kinds_json NOT LIKE '%"dynamic_code_constructor"%'
+   AND raw_signal_kinds_json NOT LIKE '%"string_timer_call"%'
    AND EXISTS(SELECT 1 FROM current_body c WHERE c.sha256=body_analysis_latest.sha256)
   """,(contract,pipe,PREVIOUS_ANALYSIS_CONTRACT))
  return db.total_changes-before

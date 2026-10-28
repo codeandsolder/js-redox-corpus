@@ -35,7 +35,7 @@ def whatwg_windows_1252(raw: bytes) -> bytes:
     """Decode bytes using the WHATWG Windows-1252 index and emit UTF-8."""
     return raw.decode("latin1").translate(WINDOWS_1252_C1).encode("utf-8")
 
-PROGRESS_CONTRACT = "safe-deob+sus/v2"
+PROGRESS_CONTRACT = "safe-deob+sus/v5"
 SEMANTIC_CONTRACT = "js-sus-scan/v8"
 
 TRIVIAL_ANONYMOUS = {
