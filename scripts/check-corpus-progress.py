@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import hashlib, json, os, sqlite3, subprocess, sys, tempfile
+import hashlib, importlib.util, json, os, sqlite3, subprocess, sys, tempfile
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]; BUILDER=ROOT/'scripts/build-corpus-catalog.py'; SEMANTIC=ROOT/'scripts/build-corpus-semantic-index.py'; UPDATER=ROOT/'scripts/update-corpus-progress.py'; SAMPLER=ROOT/'scripts/check-corpus-classifier-sample.py'
 def main():
@@ -33,6 +33,22 @@ path=sys.argv[-1]; text=open(path,errors='replace').read(); fatal='INVALID_SENTI
   assert (cand/'quick-focus.txt').read_text().strip()==str(cap/body)
   semantic2=subprocess.run([sys.executable,str(SEMANTIC),'--database',str(db),'--candidate-dir',str(cand),'--sus-scan',str(sus),'--chunk-size','1','--nice','0'],check=True,text=True,capture_output=True)
   assert 'semantic pending=0' in semantic2.stdout,semantic2.stdout
+  # v2 -> v4 bootstrapping may only clone rows whose result is unaffected by
+  # newer scanner semantics / proof-gated transforms. Affected rows must run.
+  migration_db=w/'migration.sqlite'; src=sqlite3.connect(db); dst=sqlite3.connect(migration_db); src.backup(dst); src.close()
+  spec=importlib.util.spec_from_file_location('progress_updater',UPDATER); updater=importlib.util.module_from_spec(spec); spec.loader.exec_module(updater)
+  updater.ensure_schema(dst)
+  base={'analysis_contract':updater.PREVIOUS_ANALYSIS_CONTRACT,'pipeline_id':'old-pipeline','observed_at':'2026-01-01T00:00:00+00:00','output_sha256':None,'output_bytes':1,'deob_changed':0,'deob_iterations':1,'transform_total':0,'transforms_json':'{}','deob_error':None,'diagnostics':0,'fatal_error':0,'raw_signal_count':1,'raw_cluster_count':1,'raw_top_score':10,'raw_signal_kinds_json':'{}','actionable_signal_count':1,'actionable_cluster_count':1,'actionable_top_score':10,'parser_fatal_error':0,'analysis_complete':1,'parse_recovery':None,'opaque_parse_spans_json':'[]'}
+  cases=[(sha,cap/body,{}),(invalid_sha,cap/invalid_body,{'direct_table_decoder':1}),(weak_sha,cap/weak_body,{'array_rotation':2,'rotation_checksum_iife':1})]
+  with dst:
+   for case_sha,case_path,kinds in cases:
+    row=dict(base); row.update({'sha256':case_sha,'input_path':str(case_path),'actionable_signal_kinds_json':json.dumps(kinds,separators=(',',':')),'actionable_signal_count':sum(kinds.values()),'raw_signal_kinds_json':json.dumps(kinds,separators=(',',':')),'raw_signal_count':sum(kinds.values())})
+    updater.write_row(dst,row)
+  migrated=updater.migrate_previous_contract(dst,updater.ANALYSIS_CONTRACT,'current-pipeline')
+  assert migrated==1,migrated
+  migrated_shas={r[0] for r in dst.execute('SELECT sha256 FROM body_analysis_run WHERE analysis_contract=?',(updater.ANALYSIS_CONTRACT,))}
+  assert migrated_shas=={sha},migrated_shas
+  dst.close()
   paths=w/'paths.txt'; paths.write_text(str(cap/body)+'\n')
   invalid_paths=w/'invalid-paths.txt'; invalid_paths.write_text(str(cap/invalid_body)+'\n')
   weak_paths=w/'weak-paths.txt'; weak_paths.write_text(str(cap/weak_body)+'\n')

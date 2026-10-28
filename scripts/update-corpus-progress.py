@@ -60,11 +60,17 @@ def migrate_previous_contract(db,contract,pipe):
    parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json
   FROM body_analysis_latest
   WHERE analysis_contract=? AND fatal_error=0
+   -- Re-run rows touched by scanner semantics or proof-gated transforms
+   -- added since the v2 baseline. Copying these would falsely attribute an
+   -- old post-deob result to the current engine pipeline.
    AND actionable_signal_kinds_json NOT LIKE '%"charcode_decode_call"%'
    AND actionable_signal_kinds_json NOT LIKE '%"base64_decode_call"%'
    AND actionable_signal_kinds_json NOT LIKE '%"radix_string_call"%'
    AND actionable_signal_kinds_json NOT LIKE '%"base64_blob"%'
    AND actionable_signal_kinds_json NOT LIKE '%"opaque_blob"%'
+   AND actionable_signal_kinds_json NOT LIKE '%"direct_table_decoder"%'
+   AND actionable_signal_kinds_json NOT LIKE '%"array_rotation"%'
+   AND actionable_signal_kinds_json NOT LIKE '%"rotation_checksum_iife"%'
    AND EXISTS(SELECT 1 FROM current_body c WHERE c.sha256=body_analysis_latest.sha256)
   """,(contract,pipe,PREVIOUS_ANALYSIS_CONTRACT))
  return db.total_changes-before
