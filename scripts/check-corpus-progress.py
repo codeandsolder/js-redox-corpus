@@ -25,14 +25,31 @@ a=sys.argv[1:]; inp=Path(a[0]); out=Path(a[1]); report=Path(a[a.index('--report'
 import json,sys
 path=sys.argv[-1]; text=open(path,errors='replace').read(); fatal='INVALID_SENTINEL' in text; weak='WEAK_SENTINEL' in text; print(json.dumps({'schema':'js-sus-scan/v7','files':[{'input':path,'bytes':1,'diagnostics':int(fatal),'fatal_error':fatal,'signal_count':0 if fatal else (1 if weak else 5),'signal_kinds':{} if fatal else ({'base64_call_arg':1} if weak else {'eval':2}),'top_score':0 if fatal or weak else 17,'clusters':[] if fatal or weak else [{'score':17}],'actionable_signal_count':0 if fatal else (1 if weak else 3),'actionable_signal_kinds':{} if fatal else ({'base64_call_arg':1} if weak else {'dynamic_code_call':3}),'actionable_top_score':0 if fatal or weak else 15,'actionable_clusters':[] if fatal or weak else [{'score':15}]}]}))
 """); sus.chmod(0o755)
-  semantic=subprocess.run([sys.executable,str(SEMANTIC),'--database',str(db),'--candidate-dir',str(cand),'--sus-scan',str(sus),'--chunk-size','1','--nice','0'],check=True,text=True,capture_output=True)
+  sus_v8=w/'sus-v8'; sus_v8.write_text(sus.read_text().replace('js-sus-scan/v7','js-sus-scan/v8')); sus_v8.chmod(0o755)
+  semantic=subprocess.run([sys.executable,str(SEMANTIC),'--database',str(db),'--candidate-dir',str(cand),'--sus-scan',str(sus_v8),'--chunk-size','1','--nice','0'],check=True,text=True,capture_output=True)
   sem_report=json.loads(semantic.stdout[semantic.stdout.index('{'):]); assert sem_report['newly_scanned']==3,sem_report; assert sem_report['current_actionable']==1,sem_report; assert sem_report['current_weak_signals']==1,sem_report; assert sem_report['current_invalid']==1,sem_report
   assert (cand/'semantic-actionable.txt').read_text().strip()==str(cap/body)
   assert (cand/'semantic-invalid.txt').read_text().strip()==str(cap/invalid_body)
   assert (cand/'semantic-weak-signals.txt').read_text().strip()==str(cap/weak_body)
   assert (cand/'quick-focus.txt').read_text().strip()==str(cap/body)
-  semantic2=subprocess.run([sys.executable,str(SEMANTIC),'--database',str(db),'--candidate-dir',str(cand),'--sus-scan',str(sus),'--chunk-size','1','--nice','0'],check=True,text=True,capture_output=True)
+  semantic2=subprocess.run([sys.executable,str(SEMANTIC),'--database',str(db),'--candidate-dir',str(cand),'--sus-scan',str(sus_v8),'--chunk-size','1','--nice','0'],check=True,text=True,capture_output=True)
   assert 'semantic pending=0' in semantic2.stdout,semantic2.stdout
+  # v7 -> v8 raw migration must rescan dynamic-code rows because literal
+  # source is demoted to raw-only evidence in v8. Unrelated rows carry forward.
+  raw_migration_db=w/'raw-migration.sqlite'; src=sqlite3.connect(db); raw_db=sqlite3.connect(raw_migration_db); src.backup(raw_db); src.close()
+  raw_db.execute("INSERT OR REPLACE INTO body_semantic_scan SELECT sha256,'js-sus-scan/v7',scanned_at,diagnostics,fatal_error,raw_signal_count,raw_cluster_count,raw_top_score,raw_signal_kinds_json,actionable_signal_count,actionable_cluster_count,actionable_top_score,actionable_signal_kinds_json,decode_encoding,decode_source,decode_had_errors,decode_uncertain,parser_fatal_error,analysis_complete,parse_recovery,opaque_parse_spans_json FROM body_semantic_scan WHERE scan_contract='js-sus-scan/v8'")
+  raw_db.execute("DELETE FROM body_semantic_scan WHERE scan_contract='js-sus-scan/v8'")
+  raw_db.execute("UPDATE body_semantic_scan SET raw_signal_kinds_json=?, actionable_signal_kinds_json=? WHERE sha256=? AND scan_contract='js-sus-scan/v7'",('{}','{}',sha))
+  dynamic_call=json.dumps({'dynamic_code_call':1},separators=(',',':'))
+  raw_db.execute("UPDATE body_semantic_scan SET raw_signal_kinds_json=?, actionable_signal_kinds_json=? WHERE sha256=? AND scan_contract='js-sus-scan/v7'",(dynamic_call,dynamic_call,invalid_sha))
+  dynamic_ctor=json.dumps({'dynamic_code_constructor':1},separators=(',',':'))
+  raw_db.execute("UPDATE body_semantic_scan SET raw_signal_kinds_json=?, actionable_signal_kinds_json=? WHERE sha256=? AND scan_contract='js-sus-scan/v7'",(dynamic_ctor,dynamic_ctor,weak_sha))
+  raw_db.commit()
+  spec=importlib.util.spec_from_file_location('semantic_index',SEMANTIC); semantic_index=importlib.util.module_from_spec(spec); spec.loader.exec_module(semantic_index)
+  assert semantic_index.migrate_previous_contract(raw_db)==1
+  migrated_raw={r[0] for r in raw_db.execute("SELECT sha256 FROM body_semantic_scan WHERE scan_contract='js-sus-scan/v8'")}
+  assert migrated_raw=={sha},migrated_raw
+  raw_db.close()
   # v2 -> v4 bootstrapping may only clone rows whose result is unaffected by
   # newer scanner semantics / proof-gated transforms. Affected rows must run.
   migration_db=w/'migration.sqlite'; src=sqlite3.connect(db); dst=sqlite3.connect(migration_db); src.backup(dst); src.close()

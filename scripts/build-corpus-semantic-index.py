@@ -17,8 +17,8 @@ DEFAULT_CORPUS = CORPUS_ROOT
 DEFAULT_DB = DEFAULT_CORPUS / "preclass/corpus.sqlite"
 DEFAULT_CANDIDATES = DEFAULT_CORPUS / "preclass/candidates"
 DEFAULT_SUS = JS_REDOX_ROOT / ".cargo-target-nodebug/release/sus-scan"
-SEMANTIC_CONTRACT = "js-sus-scan/v7"
-PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v6"
+SEMANTIC_CONTRACT = "js-sus-scan/v8"
+PREVIOUS_SEMANTIC_CONTRACT = "js-sus-scan/v7"
 
 SEMANTIC_CANDIDATE_NAMES = (
     "semantic-actionable",
@@ -78,7 +78,7 @@ def ensure_schema(db: sqlite3.Connection) -> None:
 
 
 def migrate_previous_contract(db: sqlite3.Connection) -> int:
-    """Carry forward v6 rows unaffected by the v7 direct-decoder dataflow policy."""
+    """Carry forward v7 rows unaffected by v8 literal-dynamic-code policy."""
     before = db.total_changes
     with db:
         db.execute(
@@ -99,7 +99,9 @@ def migrate_previous_contract(db: sqlite3.Connection) -> int:
                    old.parse_recovery,old.opaque_parse_spans_json
             FROM body_semantic_scan old
             WHERE old.scan_contract=? AND old.fatal_error=0
-              AND old.actionable_signal_kinds_json NOT LIKE '%"direct_table_decoder"%'
+              AND old.raw_signal_kinds_json NOT LIKE '%"dynamic_code_call"%'
+              AND old.raw_signal_kinds_json NOT LIKE '%"dynamic_code_constructor"%'
+              AND old.raw_signal_kinds_json NOT LIKE '%"string_timer_call"%'
               AND EXISTS (SELECT 1 FROM current_body c WHERE c.sha256=old.sha256)
               AND NOT EXISTS (
                 SELECT 1 FROM body_representation_edge e
@@ -230,11 +232,15 @@ def main() -> None:
                 SELECT 1 FROM body_semantic_scan ss
                 WHERE ss.sha256=c.sha256 AND ss.scan_contract=?
               )
-            ORDER BY c.sha256
             """,
             (SEMANTIC_CONTRACT,),
         )
     )
+    # The indexed content-kind query is cheap, but asking SQLite to ORDER BY
+    # current_body.sha256 forces a large temporary B-tree because the planner
+    # sensibly starts from body_scan's selective index. We materialize the rows
+    # here anyway, so sort in memory and preserve the same deterministic order.
+    all_pending.sort(key=lambda row: row[0])
     pending = all_pending[:args.limit] if args.limit else all_pending
     print(f"semantic pending={len(pending)} contract={SEMANTIC_CONTRACT}", flush=True)
     done = 0
